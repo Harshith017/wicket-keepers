@@ -15,6 +15,13 @@
       "computedHash": "23b3930015c478034b222e1a015da03a962c8ab48aee9fb4f3f69d977034feaa",
       "installMode": "copy"
     },
+    "hallmark": {
+      "source": "Nutlope/hallmark",
+      "sourceType": "github",
+      "skillPath": "skills/hallmark/SKILL.md",
+      "computedHash": "1465546d7971f57d428a0cbccfe0fa0426d1c309bec28ceefeb70e76f38c640e",
+      "installMode": "copy"
+    },
     "implement-spec": {
       "source": "mattpocock/skills",
       "sourceType": "github",
