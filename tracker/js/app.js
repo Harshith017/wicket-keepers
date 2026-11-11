@@ -42,10 +42,26 @@ class VideoSource {
   get height() { return video.videoHeight; }
   async open(file) {
     if (this.kind === 'camera') {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } },
-      });
+      // Insist on 60 fps first: with only an "ideal" hint most phones quietly
+      // hand back 30. Phones usually offer 60 at 720p or 1080p, so try both
+      // before settling for whatever the camera will give.
+      const base = { facingMode: { ideal: 'environment' } };
+      const ladder = [
+        { ...base, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { min: 55, ideal: 60 } },
+        { ...base, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { min: 55, ideal: 60 } },
+        { ...base, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 60 } },
+      ];
+      let lastErr = null;
+      for (const videoC of ladder) {
+        try { this.stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: videoC }); break; }
+        catch (err) {
+          lastErr = err;
+          if (err.name !== 'OverconstrainedError' && err.name !== 'ConstraintNotSatisfiedError') throw err;   // e.g. permission denied
+        }
+      }
+      if (!this.stream) throw lastErr;
+      const st = this.stream.getVideoTracks()[0].getSettings();
+      this.camFps = st.frameRate ? Math.round(st.frameRate) : null;
       video.srcObject = this.stream; video.loop = false;
     } else {
       this.url = URL.createObjectURL(file);
@@ -114,7 +130,12 @@ function recalibrate() {
     S.camInfo = `Camera ${C[2].toFixed(1)} m high, ${Math.hypot(C[0], C[1]).toFixed(0)} m from the striker's stumps`;
   } else S.camInfo = 'Those corners don’t form a pitch the camera could be seeing — adjust them.';
   tracker.W = W;
-  $('calInfo').textContent = src.kind === 'demo' ? 'Demo scene is calibrated automatically. ' + S.camInfo : S.camInfo;
+  let info = src.kind === 'demo' ? 'Demo scene is calibrated automatically. ' + S.camInfo : S.camInfo;
+  if (src.kind === 'camera' && src.camFps) {
+    info += src.camFps >= 55 ? ` \u00b7 Camera running at ${src.camFps} fps.`
+      : ` \u00b7 This browser only gave ${src.camFps} fps, so fast balls will read less accurately.`;
+  }
+  $('calInfo').textContent = info;
 }
 
 function canvasPos(e) {

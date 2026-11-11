@@ -22,6 +22,9 @@ runs the real pipeline on it, showing the ground truth beside each result.
 3. Set the field on the **Field** tab (presets, drag fielders, boundary size,
    left/right-hander) and bowl.
 
+The camera is opened at 60 fps when the phone and browser allow it (the line
+under the video says what rate you actually got).
+
 Recorded clips work too (**Video clip**); for slow-motion footage set the
 slow-motion factor in Setup so times are scaled back to real time.
 
