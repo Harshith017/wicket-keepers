@@ -284,7 +284,7 @@ function drawOverlay(W, H) {
       c.beginPath(); c.arc(x + ox, y, 14 * k, 0, 7); c.fillStyle = held ? 'rgba(255,224,102,.1)' : 'rgba(255,224,102,.3)'; c.fill();
       c.lineWidth = 3 * k; c.strokeStyle = '#ffe066'; c.stroke();
       if (!held) { c.beginPath(); c.arc(x, y, 3 * k, 0, 7); c.fillStyle = '#ffe066'; c.fill(); }
-      c.font = `600 ${14 * k}px Inter, sans-serif`; c.textAlign = stumps ? (ox < 0 ? 'right' : 'left') : 'center';
+      c.font = `600 ${14 * k}px Geist, sans-serif`; c.textAlign = stumps ? (ox < 0 ? 'right' : 'left') : 'center';
       const tx = stumps ? x + ox + Math.sign(ox) * 20 * k : x, ty = stumps ? y + 5 * k : y - 24 * k;
       c.lineWidth = 4 * k; c.strokeStyle = 'rgba(0,0,0,.7)'; c.strokeText(names[i], tx, ty);
       c.fillStyle = '#fff'; c.fillText(names[i], tx, ty);
@@ -382,17 +382,18 @@ function onTrack(candidates) {
 
 function headline(b) {
   switch (b.outcome) {
-    case 'SIX': return ['SIX!', 'six', 'Cleared the rope on the full.'];
-    case 'FOUR': return ['FOUR!', 'six', 'Beat the field and ran away to the boundary.'];
-    case 'CAUGHT': return ['OUT — caught', 'out', `Taken at ${b.byName.toLowerCase()}.`];
-    case 'BOWLED': return ['BOWLED!', 'out', 'No shot connected and the ball was hitting the stumps.'];
+    case 'SIX': return ['Six', 'six', 'Cleared the rope on the full.'];
+    case 'FOUR': return ['Four', 'six', 'Beat the field and reached the boundary.'];
+    case 'CAUGHT': return ['Caught', 'out', `Taken at ${b.byName.toLowerCase()}.`];
+    case 'BOWLED': return ['Bowled', 'out', 'No shot connected and the ball was hitting the stumps.'];
     case 'DOT': return ['No shot', '', 'Through to the keeper.'];
     case 'LOST': return ['Shot not seen', '', 'Lost the ball at the batter, so this one isn\u2019t scored.'];
     default: return [b.runs ? `${b.runs} run${b.runs > 1 ? 's' : ''}` : 'Dot ball', '',
       b.byName ? `Fielded at ${b.byName.toLowerCase()}.` : 'Stopped in the outfield.'];
   }
 }
-const tile = (label, value, u, note) => `<div class="tile"><div class="label">${label}</div><div class="v">${value}${u ? `<small>${u}</small>` : ''}</div>${note ? `<div class="n">${note}</div>` : ''}</div>`;
+const isFigure = (v) => /^[\d.\u2014/ \u00d7-]+$/.test(String(v));
+const tile = (label, value, u, note) => `<div class="tile"><div class="label">${label}</div><div class="v${isFigure(value) ? '' : ' word'}">${value}${u ? `<small>${u}</small>` : ''}</div>${note ? `<div class="n">${note}</div>` : ''}</div>`;
 function swingText(b) {
   if (b.swingCm === null || b.swingCm === undefined) return ['—', '', ''];
   const a = Math.abs(b.swingCm);
@@ -447,7 +448,7 @@ function renderSession() {
   const B = S.balls;
   renderMaps();
   if (!B.length) {
-    $('sessTiles').innerHTML = '<p class="muted" style="margin:0">No balls yet. Start tracking and every delivery lands here.</p>';
+    $('sessTiles').innerHTML = '<p class="muted" style="margin:0;grid-column:1/-1;padding:20px">No balls yet. Each delivery is added here as it is tracked.</p>';
     $('sessTable').innerHTML = ''; $('clearBtn').disabled = true; return;
   }
   $('clearBtn').disabled = false;
@@ -521,7 +522,8 @@ function syncControls() {
   $('calBtn').textContent = S.calibrating ? 'Done' : 'Calibrate pitch';
   $('calBtn').classList.toggle('primary', S.calibrating);
   $('armBtn').disabled = !has;
-  $('calModeSeg').hidden = !has;
+  $('calModeSeg').hidden = !S.calibrating;
+  $('sCal').value = settings.calMode;
   document.querySelectorAll('#calModeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === settings.calMode));
   $('armBtn').textContent = S.armed ? 'Pause tracking' : 'Resume tracking';
   view.style.touchAction = S.calibrating ? 'none' : 'auto';
@@ -569,6 +571,7 @@ const geometryChanged = () => {
 };
 bind('sL', 'L', (v) => Math.min(25, Math.max(8, +v)), geometryChanged);
 bind('sW', 'rectW', (v) => Math.min(6, Math.max(0.5, +v)), geometryChanged);
+bind('sCal', 'calMode', String, () => { detector.reset(); tracker.reset(); recalibrate(); syncControls(); });
 bind('sUnits', 'units', String, () => { renderResult(); renderSession(); });
 bind('sSens', 'sens', (v) => Math.min(150, Math.max(15, +v)));
 bind('sProc', 'procW', (v) => +v);

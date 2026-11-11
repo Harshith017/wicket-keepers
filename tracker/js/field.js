@@ -116,12 +116,12 @@ export class FieldView {
     // pitch
     const pw = Math.max(5, 3.05 * g.s);
     c.fillStyle = col('--pitch'); c.fillRect(ax - pw / 2, ay - 1.5 * g.s, pw, (L + 3) * g.s);
-    c.fillStyle = col('--ink'); c.fillRect(ax - 3, ay - 1, 6, 2); c.fillRect(ax - 3, by - 1, 6, 2);
+    c.fillStyle = col('--chip-edge'); c.fillRect(ax - 3, ay - 1, 6, 2); c.fillRect(ax - 3, by - 1, 6, 2);
     // labels for orientation
-    c.font = '600 10px Inter, system-ui, sans-serif'; c.fillStyle = col('--turf-ink'); c.textAlign = 'center';
+    c.font = '500 11px Geist, system-ui, sans-serif'; c.fillStyle = col('--turf-ink'); c.textAlign = 'center';
     const offLeft = st.hand !== 'L';
-    c.fillText(offLeft ? 'OFF' : 'LEG', g.cx - st.boundary * g.s * 0.72, g.cy + 3);
-    c.fillText(offLeft ? 'LEG' : 'OFF', g.cx + st.boundary * g.s * 0.72, g.cy + 3);
+    c.fillText(offLeft ? 'Off' : 'Leg', g.cx - st.boundary * g.s * 0.72, g.cy + 3);
+    c.fillText(offLeft ? 'Leg' : 'Off', g.cx + st.boundary * g.s * 0.72, g.cy + 3);
     // earlier shots (wagon wheel)
     for (const sh of this.shots) {
       const hot = sh === this.highlight;
@@ -135,10 +135,10 @@ export class FieldView {
       const special = f.role === 'keeper' || f.role === 'bowler';
       const hit = this.highlight && this.highlight.by === f.id;
       c.beginPath(); c.arc(sx, sy, this.drag === f ? 10 : 7, 0, 7);
-      c.fillStyle = hit ? col('--brass') : special ? col('--ink') : col('--chip');
+      c.fillStyle = hit ? col('--brass') : special ? col('--chip-edge') : col('--chip');
       c.fill(); c.lineWidth = 2; c.strokeStyle = col('--chip-edge'); c.stroke();
       if (this.editable || hit) {
-        c.font = '600 10px Inter, system-ui, sans-serif'; c.fillStyle = col('--turf-ink'); c.textAlign = 'center';
+        c.font = '500 11px Geist, system-ui, sans-serif'; c.fillStyle = col('--turf-ink'); c.textAlign = 'center';
         c.fillText(positionName(f, st.hand), sx, sy + (sy > g.cy + st.boundary * g.s * 0.8 ? -12 : 19));
       }
     }

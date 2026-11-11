@@ -68,3 +68,11 @@ with pixel noise, and checks the reconstruction against the truth.
 - Spin is reported as turn off the pitch, not revolutions.
 - If the ball is hidden by the batter at impact the ball is logged as
   "Shot not seen" rather than guessed.
+
+## Design
+
+Graphite neutrals, hairline borders, one green accent, Geist and Geist Mono.
+Colour is kept for the content (the field, the ball paths, the maps). The
+restyle followed the audit and pass order of the
+[unslop](https://github.com/heydamir/unslop) skill by Damir Sokolovsky
+(CC BY 4.0); none of its code is included.

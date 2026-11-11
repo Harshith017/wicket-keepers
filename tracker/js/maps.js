@@ -50,7 +50,7 @@ export class MapView {
     });
   }
   label(c, text, x, y, align = 'left') {
-    c.font = '600 10.5px Inter, system-ui, sans-serif'; c.textAlign = align; c.textBaseline = 'middle';
+    c.font = '400 11px Geist, system-ui, sans-serif'; c.textAlign = align; c.textBaseline = 'middle';
     c.fillStyle = css(this.canvas, '--map-ink'); c.fillText(text, x, y);
   }
   pitch(c, w, h) {
