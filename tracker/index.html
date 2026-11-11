@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Ball tracker</title>
+<link rel="icon" type="image/png" href="../favicon.png">
+<meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141415" media="(prefers-color-scheme: dark)">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* Sign-in and access screens only. The tracker itself is not in this page:
+     its code is fetched after sign-in, and only for approved people. */
+  .gate{--g-page:#fafafa;--g-card:#ffffff;--g-ink:#171717;--g-ink2:#525252;--g-ink3:#737373;--g-hair:rgba(23,23,23,.12);
+    --g-primary:#171717;--g-on:#ffffff;--g-neg:#c62828;
+    position:fixed;inset:0;z-index:100;overflow-y:auto;background:var(--g-page);color:var(--g-ink);
+    font:400 15px/22px 'Geist',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased;}
+  @media (prefers-color-scheme:dark){
+    .gate{--g-page:#141415;--g-card:#19191b;--g-ink:#ededed;--g-ink2:#a1a1a6;--g-ink3:#85858b;--g-hair:rgba(237,237,237,.14);
+      --g-primary:#ededed;--g-on:#141415;--g-neg:#f0736f;}
+  }
+  html,body{margin:0;height:100%;}
+  .gate[hidden]{display:none;}
+  .gate *{box-sizing:border-box;}
+  .gate-col{max-width:400px;margin:0 auto;padding:96px 24px 48px;}
+  .gate-col.wide{max-width:560px;padding-top:32px;}
+  .gate h1{font-size:20px;line-height:28px;font-weight:600;margin:0 0 8px;}
+  .gate h2{font-size:14px;line-height:20px;font-weight:500;margin:32px 0 8px;}
+  .gate p{margin:0 0 16px;color:var(--g-ink2);font-size:14px;line-height:20px;}
+  .gate .who{font-family:'Geist Mono',ui-monospace,monospace;font-size:12px;line-height:16px;color:var(--g-ink3);margin:24px 0 0;word-break:break-all;}
+  .gate button,.gate input{font:inherit;color:inherit;}
+  .gate .gbtn{height:40px;padding:0 16px;border-radius:8px;border:1px solid var(--g-hair);background:var(--g-card);font-size:14px;font-weight:500;cursor:pointer;}
+  .gate .gbtn.primary{background:var(--g-primary);border-color:var(--g-primary);color:var(--g-on);}
+  .gate .gbtn.block{width:100%;}
+  .gate .gbtn.danger{color:var(--g-neg);}
+  .gate .gbtn:disabled{opacity:.5;cursor:default;}
+  .gate .glink{background:none;border:none;padding:0;color:var(--g-ink2);font-size:13px;text-decoration:underline;cursor:pointer;}
+  .gate input[type=text]{width:100%;height:40px;padding:0 12px;border-radius:8px;border:1px solid var(--g-hair);background:var(--g-card);margin-bottom:12px;}
+  .gate label{display:block;font-size:13px;line-height:20px;color:var(--g-ink2);margin-bottom:4px;}
+  .gate button:focus-visible,.gate input:focus-visible{outline:2px solid #15803d;outline-offset:2px;}
+  .gate .rows{border:1px solid var(--g-hair);border-radius:10px;background:var(--g-card);overflow:hidden;}
+  .gate .rowi{display:flex;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid var(--g-hair);}
+  .gate .rowi:first-child{border-top:none;}
+  .gate .rowi .grow{flex:1;min-width:0;}
+  .gate .rowi .nm{font-size:14px;line-height:20px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .gate .rowi .em{font-size:12px;line-height:16px;color:var(--g-ink3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .gate .rowi .gbtn{height:32px;padding:0 12px;font-size:13px;}
+  .gate .none{padding:16px;color:var(--g-ink3);font-size:13px;line-height:20px;}
+  .gate .head{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+  .gate .err{color:var(--g-neg);}
+</style>
+</head>
+<body>
+<div class="gate" id="gate"><div class="gate-col" id="gate-body"><p>Loading</p></div></div>
+<div id="app-root"></div>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="../firebase-config.js"></script>
+<script src="gate.js"></script>
+</body>
+</html>
