@@ -9,8 +9,8 @@ phone at the pitch and each delivery is picked up automatically:
 - The shot is carried out over **the field you set** to call it a six, a four,
   a catch or a fielded ball (with runs)
 
-For development, serve the repo locally and open `tracker-src/` (camera access
-needs HTTPS or `localhost`). Try **Demo** first: it renders a synthetic net session through a virtual camera and
+Open `tracker/` from the site (camera access needs HTTPS or `localhost`). Try
+**Demo** first: it renders a synthetic net session through a virtual camera and
 runs the real pipeline on it, showing the ground truth beside each result.
 
 ## Using it
@@ -50,7 +50,7 @@ No build step and no dependencies.
 ## Tests
 
 ```bash
-node tracker-src/test/run.mjs
+node tracker/test/run.mjs
 ```
 
 Generates deliveries with true physics, projects them through a virtual camera
@@ -79,59 +79,3 @@ Colour is kept for the content (the field, the ball paths, the maps). The
 restyle followed the audit and pass order of the
 [unslop](https://github.com/heydamir/unslop) skill by Damir Sokolovsky
 (CC BY 4.0); none of its code is included.
-
-## Private access
-
-The app is not public. What is on the website (`tracker/index.html` and
-`tracker/gate.js`) is only a sign-in page with no tracking code in it. The app
-itself is stored in Firestore and handed out only to people the owner approved.
-
-- `trackerUsers/{email}`: approved people
-- `trackerRequests/{email}`: people waiting for approval
-- `trackerApp/current`: the app (built by `tools/build-tracker.mjs`)
-
-Everything in `tracker-src/` and `tools/` is excluded from hosting in
-`firebase.json`. Do not host this repo with GitHub Pages "deploy from branch":
-that serves every file, including these sources.
-
-### One-time setup
-
-1. Make the GitHub repo private (Settings > General > Danger zone > Change
-   visibility).
-2. In the Firebase console, open Firestore Database > Rules and add the block
-   in `tracker-src/firestore-rules-to-add.txt` inside the existing rules, with
-   the owner's Google email filled in. Publish the rules.
-3. Deploy the site to Firebase Hosting from a computer with Node installed:
-
-   ```bash
-   npm install -g firebase-tools
-   ```
-
-   ```bash
-   firebase login
-   ```
-
-   ```bash
-   firebase deploy --only hosting
-   ```
-
-   The site is then at `https://wicket-keepers.web.app/` and the tracker at
-   `/tracker/`.
-4. Open `/tracker/`, sign in as the owner, and under "Publish the app" choose
-   `tracker-src/dist/tracker.bundle.json`.
-
-### Day to day
-
-- People open `/tracker/`, sign in with Google and send a request. The owner
-  approves or removes them under Setup > Manage access.
-- After changing the app, run `node tools/build-tracker.mjs` and publish the
-  new bundle from Manage access. The website itself does not need redeploying
-  unless the sign-in page changed.
-
-### What this does and does not protect
-
-- People who are not approved cannot use the app or download its code.
-- Someone you approve runs the code in their browser, so they could copy it.
-  That is true of any web app; only approve people you trust.
-- The tracker code was in this repo while it was public, so anyone who copied
-  it during that time still has that copy.

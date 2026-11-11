@@ -588,13 +588,4 @@ document.addEventListener('visibilitychange', () => {
 });
 
 syncField(); syncControls(); renderScore(); renderSession();
-// When opened through the access gate, show who is signed in (and access management for the owner).
-if (window.__gate) {
-  const g = window.__gate;
-  $('acctCard').hidden = false;
-  $('acctWho').textContent = `Signed in as ${g.email}. App version ${g.version}.`;
-  $('acctOut').addEventListener('click', () => g.signOut());
-  $('acctManage').hidden = !g.isAdmin;
-  $('acctManage').addEventListener('click', () => g.manage());
-}
 window.__tracker = { S, F, settings };      // handy for debugging from the console
