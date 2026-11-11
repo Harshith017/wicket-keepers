@@ -20,6 +20,8 @@
     --chip:#FBFAF4; --chip-edge:#17241F;
     --six:#F2C230; --four:#FBFAF4; --out:#B8303A; --run:#12324A;
     --shadow:0 10px 24px rgba(23,36,31,.10);
+    --map-surface:#FBFAF4; --map-band-a:#E9DFBE; --map-band-b:#DDD0A6; --map-line:#8A7B4E; --map-ink:#3A4A41;
+    --map-dot:#17324A; --map-latest:#B8503F; --map-stump:#6E5A2E;
   }
   @media (prefers-color-scheme:dark){
     :root{
@@ -30,6 +32,8 @@
       --chip:#EDEFE6; --chip-edge:#0B1410;
       --six:#F2C230; --four:#EDEFE6; --out:#F0707A; --run:#9CC7EA;
       --shadow:0 10px 24px rgba(0,0,0,.35);
+      --map-surface:#1B2925; --map-band-a:#3B3F2C; --map-band-b:#474B34; --map-line:#A79C73; --map-ink:#C9D2C8;
+      --map-dot:#A9CDEB; --map-latest:#F0907C; --map-stump:#E5D7A8;
     }
   }
   *{box-sizing:border-box;}
@@ -94,6 +98,16 @@
   .legend{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;font-size:12px;color:var(--ink-soft);margin-top:6px;}
   .legend i{display:inline-block;width:14px;height:4px;border-radius:2px;vertical-align:middle;margin-right:5px;border:1px solid rgba(0,0,0,.25);}
 
+  .maps{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:8px;position:relative;}
+  .maps figure{margin:0;min-width:0;}
+  .maps figcaption{font-size:13px;font-weight:600;margin-bottom:6px;}
+  .mapwrap{height:300px;}
+  .mapwrap canvas{width:100%;height:100%;display:block;touch-action:pan-y;}
+  .maps .note{font-size:12px;color:var(--ink-soft);margin:6px 0 0;line-height:1.45;}
+  .key{display:inline-block;width:9px;height:9px;border-radius:50%;vertical-align:-1px;margin:0 4px 0 2px;border:2px solid var(--map-dot);}
+  .key.fill{background:var(--map-dot);} .key.latest{background:var(--map-latest);border-color:var(--map-latest);}
+  .tip{position:absolute;z-index:5;background:var(--ink);color:var(--paper);font-size:12px;font-weight:600;padding:6px 9px;border-radius:8px;pointer-events:none;white-space:nowrap;}
+  @media (max-width:520px){ .maps{grid-template-columns:1fr;} }
   .form{display:grid;grid-template-columns:1fr auto;gap:10px 12px;align-items:center;}
   .form label{font-size:14px;}
   .form label small{display:block;color:var(--ink-soft);font-size:12px;margin-top:1px;}
@@ -150,6 +164,10 @@
         <button class="btn" id="armBtn" disabled>Pause tracking</button>
         <span class="grow muted" id="calInfo"></span>
       </div>
+      <div class="seg" id="calModeSeg" style="margin-top:8px" role="group" aria-label="Calibrate on" hidden>
+        <button data-mode="corners">Calibrate on pitch corners</button>
+        <button data-mode="stumps">Calibrate on the stumps</button>
+      </div>
 
       <div class="two" style="margin-top:12px">
         <div class="card result" id="result" hidden>
@@ -190,6 +208,22 @@
       <div class="card">
         <div class="tiles" id="sessTiles" style="margin-top:0"></div>
       </div>
+      <div class="card" id="mapsCard" hidden>
+        <div class="label">Bowling maps</div>
+        <div class="maps">
+          <figure>
+            <figcaption>Where each ball pitched</figcaption>
+            <div class="mapwrap"><canvas id="pitchMap" aria-label="Pitch map"></canvas></div>
+            <p class="note" id="pitchNote"></p>
+          </figure>
+          <figure>
+            <figcaption>Where it reached the stumps</figcaption>
+            <div class="mapwrap"><canvas id="stumpMap" aria-label="Map of balls at the stumps"></canvas></div>
+            <p class="note"><i class="key fill"></i>hitting the stumps <i class="key"></i>missing <i class="key latest"></i>latest ball. For balls that were hit, this is where the ball was heading.</p>
+          </figure>
+          <div class="tip" id="mapTip" hidden></div>
+        </div>
+      </div>
       <div class="card">
         <div class="row"><span class="label grow">Ball by ball</span><button class="btn warn" id="clearBtn">Clear session</button></div>
         <div class="tablewrap" id="sessTable" style="margin-top:8px"></div>
@@ -202,7 +236,7 @@
         <div class="label">Setting up the camera</div>
         <ol class="steps">
           <li>Put the phone on a tripod <b>behind the bowler's arm</b> (or behind the keeper), as <b>high as you can</b> — 2.5 m or more is ideal — and a little to one side so the bowler doesn't block the ball. The whole pitch must be in frame and the phone must not move.</li>
-          <li>Tap <b>Calibrate pitch</b> and drag the four corners onto the corners of the pitch: the stump line at each end, at the pitch's edges. The drawn stumps should sit on the real ones.</li>
+          <li>Tap <b>Calibrate pitch</b>. Either drag the four corners onto the corners of the pitch (the stump line at each end, at the pitch's edges), or switch to <b>Calibrate on the stumps</b> and mark the base and top of the middle stump at each end. A magnifier appears while you drag. Pitch corners are the more accurate of the two; use the stumps when the pitch edges aren't marked, as in most nets.</li>
           <li>Set the field on the <b>Field</b> tab, then bowl. Each ball is picked up automatically.</li>
         </ol>
       </div>

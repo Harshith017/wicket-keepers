@@ -253,3 +253,50 @@ export function calibrate(img, rectW, L, W, H) {
   }
   return best;
 }
+
+/**
+ * Calibrate from the stumps alone: the base and top of the middle stump at each end.
+ * img order: striker base, striker top, bowler top, bowler base.
+ * Four points in the vertical plane through both wickets; that plane is seen
+ * nearly edge-on from behind the bowler, so instead of a homography we fit
+ * focal length and pose directly from several starting guesses.
+ */
+export function calibrateStumps(img, L, W, H, stumpH = 0.711) {
+  const world = [[0, 0, 0], [0, 0, stumpH], [0, L, stumpH], [0, L, 0]];
+  const cx = W / 2, cy = H / 2;
+  const pts = img.map(([u, v]) => [(u - cx) / W, (v - cy) / W]);
+  // The end whose stump looks taller is the near one.
+  const lenS = Math.hypot(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]);
+  const lenB = Math.hypot(pts[2][0] - pts[3][0], pts[2][1] - pts[3][1]);
+  if (lenS < 1e-4 || lenB < 1e-4 || Math.abs(lenS - lenB) < 1e-5) return null;
+  const nearBowler = lenB > lenS;
+  let best = null;
+  for (const f0 of [0.6, 0.9, 1.3, 1.9]) {
+    // Distance to the near stumps from their apparent height, then a guess either side of the pitch.
+    const dNear = f0 * stumpH / Math.max(lenS, lenB);
+    for (const side of [-1, 1]) for (const hgt of [1.2, 2.5, 4.5]) {
+      const back = Math.sqrt(Math.max(1, dNear * dNear - hgt * hgt));
+      const C0 = [side * Math.min(1.5, back * 0.08), nearBowler ? L + back : -back, hgt];
+      const guess = lookAtCam(C0, [0, L / 2, 0.4], f0, 0, 0);
+      const R0 = guess.R;
+      const build = (x) => makeCam(x[0], 0, 0, matMul(rodrigues([x[1], x[2], x[3]]), R0), [x[4], x[5], x[6]]);
+      const res = (x) => {
+        const cam = build(x), out = [];
+        for (let i = 0; i < 4; i++) {
+          const p = project(cam, world[i]);
+          if (p[2] <= 0.05) { out.push(50, 50); continue; }
+          out.push((p[0] - pts[i][0]) * W, (p[1] - pts[i][1]) * W);
+        }
+        return out;
+      };
+      const sol = levenberg(res, [f0, 0, 0, 0, guess.t[0], guess.t[1], guess.t[2]], { iters: 80 });
+      const x = sol.x;
+      if (!x.every(isFinite) || !(x[0] > 0.25 && x[0] < 5)) continue;
+      const cam = makeCam(x[0] * W, cx, cy, matMul(rodrigues([x[1], x[2], x[3]]), R0), [x[4], x[5], x[6]]);
+      if (cam.C[2] < 0.15 || world.some((w) => project(cam, w)[2] <= 0)) continue;
+      const rms = Math.sqrt(sol.cost / 8);
+      if (!best || rms < best.rms) best = { cam, rms };
+    }
+  }
+  return best;
+}

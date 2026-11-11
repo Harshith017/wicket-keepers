@@ -18,7 +18,10 @@ runs the real pipeline on it, showing the ground truth beside each result.
 1. Tripod the phone behind the bowler's arm (or behind the keeper), as high as
    possible, with the whole pitch in frame. It must not move.
 2. **Calibrate pitch**: drag the four handles onto the pitch corners (stump
-   line at each end). The drawn stumps should land on the real ones.
+   line at each end), or switch to **Calibrate on the stumps** and mark the
+   base and top of the middle stump at each end. A magnifier shows while you
+   drag. Corners are more accurate; stumps work where the pitch edges are not
+   marked. Either way the drawn stumps should land on the real ones.
 3. Set the field on the **Field** tab (presets, drag fielders, boundary size,
    left/right-hander) and bowl.
 
@@ -33,8 +36,9 @@ slow-motion factor in Setup so times are scaled back to real time.
 | File | Role |
 | --- | --- |
 | `js/detector.js` | Three-frame differencing to find small moving blobs, then links them into tracks and stitches pieces split at the bat |
-| `js/geometry.js` | Camera calibration from four pitch corners (homography → focal length and pose) |
+| `js/geometry.js` | Camera calibration from four pitch corners (homography → focal length and pose) or from the two middle stumps |
 | `js/physics.js` | Rebuilds the 3D path from the 2D track using gravity, drag and the bounce on the calibrated ground; finds the bounce and bat impact; simulates the shot over the field |
+| `js/maps.js` | Session pitch map and at-the-stumps map |
 | `js/field.js` | Field presets, position names, draggable top-down field |
 | `js/sim.js` | Demo scene and delivery generator (also used by the tests) |
 | `js/app.js` | UI glue |
@@ -55,6 +59,10 @@ with pixel noise, and checks the reconstruction against the truth.
 - One camera cannot see depth; it is inferred from physics. On simulated balls
   the median ball-speed error is about 4% (larger for yorkers, at 30 fps, and
   with a low camera). Real footage has not been tuned yet and will be rougher.
+- At 30 fps roughly a third of shots are missed in simulation (the ball leaves
+  the frame too quickly); at 60 fps about one in ten. Use 60 fps.
+- Calibrating on the stumps is about half as accurate as on the pitch corners
+  for the same tapping error.
 - Bat speed is derived from the ball's exit speed with a collision model, not
   measured from the bat.
 - Spin is reported as turn off the pitch, not revolutions.

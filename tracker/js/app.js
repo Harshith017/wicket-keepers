@@ -1,4 +1,5 @@
-import { calibrate, project } from './geometry.js';
+import { calibrate, calibrateStumps, project } from './geometry.js';
+import { MapView } from './maps.js';
 import { analyseTrack, sampleSegments, simulateShot, runsFor, CREASE, STUMP_H } from './physics.js';
 import { Detector, Tracker } from './detector.js';
 import { FieldView, makeField, positionName, PRESETS } from './field.js';
@@ -9,7 +10,7 @@ const STORE = 'wkt:v1';
 
 // ---------------------------------------------------------------- state
 const saved = (() => { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) { return {}; } })();
-const settings = Object.assign({ L: 20.12, rectW: 3.05, units: 'kmh', sens: 45, procW: 960, slowmo: 1 }, saved.settings);
+const settings = Object.assign({ L: 20.12, rectW: 3.05, units: 'kmh', sens: 45, procW: 960, slowmo: 1, calMode: 'corners' }, saved.settings);
 const F = {                                   // field state, shared by both field views
   L: settings.L, boundary: saved.boundary || 65, hand: saved.hand || 'R',
   preset: saved.preset || 'balanced', fielders: saved.fielders || null,
@@ -18,6 +19,7 @@ if (!F.fielders) F.fielders = makeField(F.preset, F.hand, F.L, F.boundary);
 const S = {
   source: null, cam: null, camInfo: '', calibrating: false, armed: true,
   calibPts: saved.calibPts || [[0.42, 0.42], [0.58, 0.42], [0.72, 0.85], [0.28, 0.85]],   // striker L, striker R, bowler R, bowler L
+  stumpPts: saved.stumpPts || [[0.5, 0.45], [0.5, 0.38], [0.5, 0.56], [0.5, 0.86]],   // striker base, striker top, bowler top, bowler base
   balls: saved.balls || [], last: null, live: null, lastT: -1, drag: -1,
   fps: 0, fpsN: 0, fpsT0: 0, status: '', statusKind: '',
 };
@@ -25,7 +27,7 @@ function save() {
   try {
     localStorage.setItem(STORE, JSON.stringify({
       settings, boundary: F.boundary, hand: F.hand, preset: F.preset, fielders: F.fielders,
-      calibPts: S.calibPts, balls: S.balls.slice(-200),
+      calibPts: S.calibPts, stumpPts: S.stumpPts, balls: S.balls.slice(-200),
     }));
   } catch (e) { /* storage unavailable: carry on without persistence */ }
 }
@@ -117,18 +119,22 @@ async function setSource(kind, file) {
 }
 
 // ---------------------------------------------------------------- calibration
-const activePts = () => (S.source && S.source.kind === 'demo' ? S.source.corners() : S.calibPts);
+const byStumps = () => settings.calMode === 'stumps';
+const handlePts = () => (byStumps() ? S.stumpPts : S.calibPts);
+const activePts = () => (S.source && S.source.kind === 'demo' ? (byStumps() ? S.source.stumpPts() : S.source.corners()) : handlePts());
 function recalibrate() {
   const src = S.source;
   S.cam = null; S.camInfo = '';
   if (!src || !src.width) return;
   const W = src.width, H = src.height;
-  const r = calibrate(activePts().map(([x, y]) => [x * W, y * H]), settings.rectW, settings.L, W, H);
-  if (r && r.rms < 0.02 * W) {
+  const px = activePts().map(([x, y]) => [x * W, y * H]);
+  const r = byStumps() ? calibrateStumps(px, settings.L, W, H) : calibrate(px, settings.rectW, settings.L, W, H);
+  if (r && r.rms < (byStumps() ? 0.004 : 0.02) * W) {
     S.cam = r.cam;
     const C = r.cam.C;
     S.camInfo = `Camera ${C[2].toFixed(1)} m high, ${Math.hypot(C[0], C[1]).toFixed(0)} m from the striker's stumps`;
-  } else S.camInfo = 'Those corners don’t form a pitch the camera could be seeing — adjust them.';
+  } else S.camInfo = byStumps() ? 'Those marks don’t fit two sets of stumps — put each on the base or top of the middle stump.'
+    : 'Those corners don’t form a pitch the camera could be seeing — adjust them.';
   tracker.W = W;
   let info = src.kind === 'demo' ? 'Demo scene is calibrated automatically. ' + S.camInfo : S.camInfo;
   if (src.kind === 'camera' && src.camFps) {
@@ -145,17 +151,26 @@ function canvasPos(e) {
   const ox = (r.width - view.width * sc) / 2, oy = (r.height - view.height * sc) / 2;
   return [(e.clientX - r.left - ox) / (view.width * sc), (e.clientY - r.top - oy) / (view.height * sc), sc];
 }
+// Where a handle is drawn relative to the point it marks (stump handles sit to one side).
+const handleOffset = (i) => (byStumps() ? (i === 1 || i === 2 ? -1 : 1) * 30 / 1280 : 0);
 view.addEventListener('pointerdown', (e) => {
   if (!S.calibrating) return;
-  const [x, y, sc] = canvasPos(e);
+  const [x, y, sc] = canvasPos(e), ar = view.height / view.width;
   let bi = -1, bd = 44 / (sc * view.width);
-  S.calibPts.forEach((p, i) => { const d = Math.hypot(p[0] - x, (p[1] - y) * view.height / view.width); if (d < bd) { bd = d; bi = i; } });
-  if (bi >= 0) { S.drag = bi; view.setPointerCapture(e.pointerId); e.preventDefault(); }
+  handlePts().forEach((p, i) => {
+    const d = Math.min(Math.hypot(p[0] - x, (p[1] - y) * ar), Math.hypot(p[0] + handleOffset(i) - x, (p[1] - y) * ar));
+    if (d < bd) { bd = d; bi = i; }
+  });
+  if (bi >= 0) {
+    // Keep the grab offset so the point does not jump under the finger.
+    S.drag = bi; S.dragOff = [handlePts()[bi][0] - x, handlePts()[bi][1] - y];
+    view.setPointerCapture(e.pointerId); e.preventDefault();
+  }
 });
 view.addEventListener('pointermove', (e) => {
   if (S.drag < 0) return;
   const [x, y] = canvasPos(e);
-  S.calibPts[S.drag] = [Math.min(1, Math.max(0, x)), Math.min(1, Math.max(0, y))];
+  handlePts()[S.drag] = [Math.min(1, Math.max(0, x + S.dragOff[0])), Math.min(1, Math.max(0, y + S.dragOff[1]))];
   recalibrate();
 });
 const endDrag = () => { if (S.drag >= 0) { S.drag = -1; save(); } };
@@ -174,6 +189,7 @@ function onFrame(t) {
   if (t < S.lastT || t - S.lastT > 1.5) { detector.reset(); tracker.reset(); S.live = null; S.lastBallEnd = -100; }
   S.lastT = t;
   src.drawTo(vctx, W, H);
+  if (S.drag >= 0) grabLoupe(W, H);
 
   if (S.armed && S.cam && !S.calibrating) {
     const pw = Math.min(W, settings.procW), ph = Math.round(H * pw / W);
@@ -199,13 +215,38 @@ function onFrame(t) {
 function updatePill() {
   let txt, kind = 'live';
   if (!S.cam) { txt = 'Not calibrated'; kind = 'bad'; }
-  else if (S.calibrating) { txt = 'Drag the corners onto the pitch'; kind = 'busy'; }
+  else if (S.calibrating) { txt = byStumps() ? 'Mark the base and top of each middle stump' : 'Drag the corners onto the pitch'; kind = 'busy'; }
   else if (!S.armed) { txt = 'Paused'; kind = ''; }
   else if (S.live) { txt = 'Tracking…'; kind = 'busy'; }
   else txt = S.status || 'Ready — waiting for a ball';
   if (S.fps) txt += ` · ${Math.round(S.fps)} fps`;
   $('pillTxt').textContent = txt;
   $('pillDot').className = 'dot ' + kind;
+}
+
+// ---------------------------------------------------------------- magnifier
+// While a handle is dragged, a magnified view of the clean frame under it is
+// shown clear of the finger, so it can be placed to the pixel.
+const loupe = document.createElement('canvas'), lctx = loupe.getContext('2d');
+loupe.width = loupe.height = 220;
+function grabLoupe(W, H) {
+  const p = handlePts()[S.drag], r = 22 * W / 1280;
+  lctx.fillStyle = '#000'; lctx.fillRect(0, 0, 220, 220);
+  lctx.imageSmoothingEnabled = false;
+  lctx.drawImage(view, p[0] * W - r, p[1] * H - r, 2 * r, 2 * r, 0, 0, 220, 220);
+}
+function drawLoupe(W, H, k) {
+  const p = handlePts()[S.drag], x = p[0] * W, y = p[1] * H, R = 105 * k;
+  const cx = Math.min(W - R - 8 * k, Math.max(R + 8 * k, x)), cy = y > 2.6 * R ? y - 1.5 * R : y + 1.5 * R;
+  const c = vctx;
+  c.save();
+  c.beginPath(); c.arc(cx, cy, R, 0, 7); c.clip();
+  c.drawImage(loupe, cx - R, cy - R, 2 * R, 2 * R);
+  c.strokeStyle = 'rgba(255,224,102,.95)'; c.lineWidth = 1.5 * k;
+  c.beginPath(); c.moveTo(cx - R, cy); c.lineTo(cx - 8 * k, cy); c.moveTo(cx + 8 * k, cy); c.lineTo(cx + R, cy);
+  c.moveTo(cx, cy - R); c.lineTo(cx, cy - 8 * k); c.moveTo(cx, cy + 8 * k); c.lineTo(cx, cy + R); c.stroke();
+  c.restore();
+  c.beginPath(); c.arc(cx, cy, R, 0, 7); c.lineWidth = 3 * k; c.strokeStyle = '#ffe066'; c.stroke();
 }
 
 // ---------------------------------------------------------------- overlay
@@ -230,16 +271,25 @@ function drawOverlay(W, H) {
     for (const y of [0, L]) for (const x of [-0.1143, 0, 0.1143]) poly([[x, y, 0], [x, y, STUMP_H]], col, 2, W);
   }
   if (S.calibrating) {
-    const names = ['Striker end', 'Striker end', 'Bowler end', 'Bowler end'];
-    S.calibPts.forEach((p, i) => {
-      const x = p[0] * W, y = p[1] * H;
-      c.beginPath(); c.arc(x, y, 16 * k, 0, 7); c.fillStyle = 'rgba(255,224,102,.25)'; c.fill();
+    const stumps = byStumps();
+    const names = stumps ? ['Striker base', 'Striker top', 'Bowler top', 'Bowler base'] : ['Striker end', 'Striker end', 'Bowler end', 'Bowler end'];
+    handlePts().forEach((p, i) => {
+      const x = p[0] * W, y = p[1] * H, held = S.drag === i;
+      // Stump handles sit off to the side with a pointer, so they never cover the stump itself.
+      const ox = stumps ? (i === 1 || i === 2 ? -1 : 1) * 30 * k : 0;
+      if (stumps) {
+        c.beginPath(); c.moveTo(x, y); c.lineTo(x + ox, y);
+        c.lineWidth = 2 * k; c.strokeStyle = '#ffe066'; c.stroke();
+      }
+      c.beginPath(); c.arc(x + ox, y, 14 * k, 0, 7); c.fillStyle = held ? 'rgba(255,224,102,.1)' : 'rgba(255,224,102,.3)'; c.fill();
       c.lineWidth = 3 * k; c.strokeStyle = '#ffe066'; c.stroke();
-      c.beginPath(); c.arc(x, y, 3 * k, 0, 7); c.fillStyle = '#ffe066'; c.fill();
-      c.font = `600 ${15 * k}px Inter, sans-serif`; c.textAlign = 'center';
-      c.lineWidth = 4 * k; c.strokeStyle = 'rgba(0,0,0,.7)'; c.strokeText(names[i], x, y - 24 * k);
-      c.fillStyle = '#fff'; c.fillText(names[i], x, y - 24 * k);
+      if (!held) { c.beginPath(); c.arc(x, y, 3 * k, 0, 7); c.fillStyle = '#ffe066'; c.fill(); }
+      c.font = `600 ${14 * k}px Inter, sans-serif`; c.textAlign = stumps ? (ox < 0 ? 'right' : 'left') : 'center';
+      const tx = stumps ? x + ox + Math.sign(ox) * 20 * k : x, ty = stumps ? y + 5 * k : y - 24 * k;
+      c.lineWidth = 4 * k; c.strokeStyle = 'rgba(0,0,0,.7)'; c.strokeText(names[i], tx, ty);
+      c.fillStyle = '#fff'; c.fillText(names[i], tx, ty);
     });
+    if (S.drag >= 0) drawLoupe(W, H, k);
     return;
   }
   if (S.live) {
@@ -304,6 +354,7 @@ function onTrack(candidates) {
     at: Date.now(), speed: r.release.speed, swingCm: r.swingCm, turnDeg: r.turnDeg,
     length: r.bounce ? r.bounce.y : null, line: r.atStumps ? r.atStumps.x : null,
     hitting: !!(r.atStumps && r.atStumps.hitting), fps: Math.round(r.fps),
+    bx: r.bounce ? r.bounce.x : null, sz: r.atStumps ? r.atStumps.z : null, hand: F.hand,
   };
   if (r.shot) {
     const sim = simulateShot(r.shot.impact, r.shot.v, field);
@@ -394,6 +445,7 @@ function renderScore() {
 }
 function renderSession() {
   const B = S.balls;
+  renderMaps();
   if (!B.length) {
     $('sessTiles').innerHTML = '<p class="muted" style="margin:0">No balls yet. Start tracking and every delivery lands here.</p>';
     $('sessTable').innerHTML = ''; $('clearBtn').disabled = true; return;
@@ -415,6 +467,20 @@ function renderSession() {
       + `<td>${b.length === null ? 'Full toss' : lengthName(b.length)}</td></tr>`;
   }
   $('sessTable').innerHTML = `<table><thead><tr><th>#</th><th>Result</th><th class="num">Ball ${unit()}</th><th class="num">Bat ${unit()}</th><th>Swing</th><th>Turn</th><th>Length</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// ---------------------------------------------------------------- session maps
+const describeBall = (b, i) => `Ball ${i + 1} \u00b7 ${spd(b.speed).toFixed(0)} ${unit()} \u00b7 ${b.length == null ? 'full toss' : lengthName(b.length).toLowerCase()}, ${b.line == null ? '' : lineName(b.line).toLowerCase()}`;
+const pitchMap = new MapView($('pitchMap'), 'pitch', $('mapTip'), describeBall);
+const stumpMap = new MapView($('stumpMap'), 'stumps', $('mapTip'), describeBall);
+function renderMaps() {
+  const B = S.balls, mapped = B.filter((b) => b.sz != null);
+  $('mapsCard').hidden = !mapped.length;
+  if (!mapped.length) return;
+  const opts = { hand: F.hand, L: settings.L };
+  pitchMap.draw(B, opts); stumpMap.draw(B, opts);
+  const full = mapped.filter((b) => b.length == null).length;
+  $('pitchNote').textContent = full ? `${full} full toss${full > 1 ? 'es' : ''} not shown (never pitched).` : 'Tap a dot for that ball.';
 }
 
 // ---------------------------------------------------------------- field views
@@ -455,6 +521,8 @@ function syncControls() {
   $('calBtn').textContent = S.calibrating ? 'Done' : 'Calibrate pitch';
   $('calBtn').classList.toggle('primary', S.calibrating);
   $('armBtn').disabled = !has;
+  $('calModeSeg').hidden = !has;
+  document.querySelectorAll('#calModeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === settings.calMode));
   $('armBtn').textContent = S.armed ? 'Pause tracking' : 'Resume tracking';
   view.style.touchAction = S.calibrating ? 'none' : 'auto';
   updatePill();
@@ -463,6 +531,11 @@ $('srcSeg').addEventListener('click', (e) => {
   const k = e.target.dataset.src;
   if (!k) return;
   if (k === 'file') $('fileIn').click(); else setSource(k);
+});
+$('calModeSeg').addEventListener('click', (e) => {
+  const m = e.target.dataset.mode;
+  if (!m || m === settings.calMode) return;
+  settings.calMode = m; detector.reset(); tracker.reset(); recalibrate(); save(); syncControls();
 });
 $('fileIn').addEventListener('change', (e) => { const f = e.target.files[0]; if (f) setSource('file', f); e.target.value = ''; });
 $('calBtn').addEventListener('click', () => { S.calibrating = !S.calibrating; detector.reset(); tracker.reset(); if (!S.calibrating) save(); syncControls(); });
@@ -477,6 +550,7 @@ $('tabs').addEventListener('click', (e) => {
   document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('on', x === b));
   document.querySelectorAll('.view').forEach((v) => v.classList.toggle('on', v.id === 'v-' + b.dataset.tab));
   syncField();
+  renderMaps();
 });
 
 const bind = (id, key, parse, after) => {
@@ -500,7 +574,7 @@ bind('sSens', 'sens', (v) => Math.min(150, Math.max(15, +v)));
 bind('sProc', 'procW', (v) => +v);
 bind('sSlow', 'slowmo', (v) => Math.min(32, Math.max(1, +v)));
 
-window.addEventListener('resize', () => { big.draw(); mini.draw(); });
+window.addEventListener('resize', () => { big.draw(); mini.draw(); renderMaps(); });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && S.source && navigator.wakeLock && !wakeLock) navigator.wakeLock.request('screen').then((l) => { wakeLock = l; }).catch(() => {});
 });

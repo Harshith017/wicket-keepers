@@ -407,7 +407,8 @@ export function analyseDelivery(obsIn, cam, cfg) {
   let atStumps = null;
   if (tStumps !== null) {
     const p = segPos(lastSeg, tStumps);
-    atStumps = { x: p[0] * off, z: p[2], hitting: Math.abs(p[0]) <= STUMP_HALF_W + RB && p[2] <= STUMP_H + RB && p[2] > 0 };
+    // Below ground means the ball would have pitched again first: no meaningful arrival point.
+    if (p[2] >= 0) atStumps = { x: p[0] * off, z: p[2], hitting: Math.abs(p[0]) <= STUMP_HALF_W + RB && p[2] <= STUMP_H + RB && p[2] > 0 };
   }
 
   const nPostObs = best.type === 'bounce' ? obs.slice(0, m + 1).filter((o) => o.t > tb).length : 0;
