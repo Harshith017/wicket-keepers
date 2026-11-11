@@ -15,8 +15,10 @@ runs the real pipeline on it, showing the ground truth beside each result.
 
 ## Using it
 
-1. Tripod the phone behind the bowler's arm (or behind the keeper), as high as
-   possible, with the whole pitch in frame. It must not move.
+1. Tripod the phone behind the bowler's arm (or behind the keeper), at least
+   150 cm high (higher is better), with the whole pitch in frame. It must not
+   move. The height is worked out from calibration, and the app warns if the
+   camera is below 150 cm.
 2. **Calibrate pitch**: drag the four handles onto the pitch corners (stump
    line at each end), or switch to **Calibrate on the stumps** and mark the
    base and top of the middle stump at each end. A magnifier shows while you

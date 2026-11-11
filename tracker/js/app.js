@@ -7,6 +7,7 @@ import { DemoSource } from './sim.js';
 
 const $ = (id) => document.getElementById(id);
 const STORE = 'wkt:v1';
+const MIN_CAM_HEIGHT = 1.5;      // metres; higher is fine and is picked up by calibration
 
 // ---------------------------------------------------------------- state
 const saved = (() => { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) { return {}; } })();
@@ -124,7 +125,7 @@ const handlePts = () => (byStumps() ? S.stumpPts : S.calibPts);
 const activePts = () => (S.source && S.source.kind === 'demo' ? (byStumps() ? S.source.stumpPts() : S.source.corners()) : handlePts());
 function recalibrate() {
   const src = S.source;
-  S.cam = null; S.camInfo = '';
+  S.cam = null; S.camInfo = ''; S.camLow = false;
   if (!src || !src.width) return;
   const W = src.width, H = src.height;
   const px = activePts().map(([x, y]) => [x * W, y * H]);
@@ -132,7 +133,10 @@ function recalibrate() {
   if (r && r.rms < (byStumps() ? 0.004 : 0.02) * W) {
     S.cam = r.cam;
     const C = r.cam.C;
-    S.camInfo = `Camera ${C[2].toFixed(1)} m high, ${Math.hypot(C[0], C[1]).toFixed(0)} m from the striker's stumps`;
+    // The height is worked out from the calibration; nothing is typed in.
+    S.camLow = C[2] < MIN_CAM_HEIGHT;
+    S.camInfo = `Camera ${(C[2] * 100).toFixed(0)} cm high, ${Math.hypot(C[0], C[1]).toFixed(0)} m from the striker's stumps`
+      + (S.camLow ? `. Raise it to at least ${MIN_CAM_HEIGHT * 100} cm; this low, speed and length readings are unreliable` : '');
   } else S.camInfo = byStumps() ? 'Those marks don’t fit two sets of stumps — put each on the base or top of the middle stump.'
     : 'Those corners don’t form a pitch the camera could be seeing — adjust them.';
   tracker.W = W;
@@ -217,6 +221,7 @@ function updatePill() {
   if (!S.cam) { txt = 'Not calibrated'; kind = 'bad'; }
   else if (S.calibrating) { txt = byStumps() ? 'Mark the base and top of each middle stump' : 'Drag the corners onto the pitch'; kind = 'busy'; }
   else if (!S.armed) { txt = 'Paused'; kind = ''; }
+  else if (S.camLow && !S.live) { txt = `Camera too low \u2014 raise it to ${MIN_CAM_HEIGHT * 100} cm or more`; kind = 'bad'; }
   else if (S.live) { txt = 'Tracking…'; kind = 'busy'; }
   else txt = S.status || 'Ready — waiting for a ball';
   if (S.fps) txt += ` · ${Math.round(S.fps)} fps`;
