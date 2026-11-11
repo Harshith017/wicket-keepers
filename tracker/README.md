@@ -16,7 +16,7 @@ runs the real pipeline on it, showing the ground truth beside each result.
 ## Using it
 
 1. Tripod the phone behind the bowler's arm (or behind the keeper), at least
-   150 cm high (higher is better), with the whole pitch in frame. It must not
+   150 cm high (higher is fine), with the whole pitch in frame. It must not
    move. The height is worked out from calibration, and the app warns if the
    camera is below 150 cm.
 2. **Calibrate pitch**: drag the four handles onto the pitch corners (stump
@@ -59,8 +59,9 @@ with pixel noise, and checks the reconstruction against the truth.
 ## Limits worth knowing
 
 - One camera cannot see depth; it is inferred from physics. On simulated balls
-  the median ball-speed error is about 4% (larger for yorkers, at 30 fps, and
-  with a low camera). Real footage has not been tuned yet and will be rougher.
+  the median ball-speed error is about 4% (larger for yorkers and at 30 fps).
+  Camera height matters mostly for where the ball pitched: about 40 cm median
+  error at 100 cm, 15 cm at 150 cm, under 10 cm at 300 cm and above. Real footage has not been tuned yet and will be rougher.
 - At 30 fps roughly a third of shots are missed in simulation (the ball leaves
   the frame too quickly); at 60 fps about one in ten. Use 60 fps.
 - Calibrating on the stumps is about half as accurate as on the pitch corners
