@@ -358,7 +358,8 @@
   </div>
   <div class="pl-hint" id="plHint"></div>
 </div>
-<video id="video" playsinline muted hidden></video>
+<!-- kept "visible" but invisible: iOS will not decode frames for a hidden video -->
+<video id="video" playsinline muted preload="auto" style="position:fixed;left:0;bottom:0;width:2px;height:2px;opacity:0;pointer-events:none"></video>
 <script type="module" src="js/app.js"></script>
 </body>
 </html>

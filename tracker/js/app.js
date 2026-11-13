@@ -78,14 +78,24 @@ class VideoSource {
     } else {
       this.url = URL.createObjectURL(file);
       video.srcObject = null; video.loop = false;
+      video.muted = true; video.playsInline = true; video.preload = 'auto';
+      // iPhone Safari only reports the clip's size until it is played, so wait for
+      // that, then play and pause to get the first frame decoded.
       const ready = new Promise((resolve, reject) => {
-        const t = setTimeout(() => reject(new Error('timeout')), 15000);
-        video.onloadeddata = () => { clearTimeout(t); resolve(); };
-        video.onerror = () => { clearTimeout(t); reject(new Error('decode')); };
+        const t = setTimeout(() => reject(new Error('timeout')), 20000);
+        video.onloadedmetadata = () => { clearTimeout(t); resolve(); };
+        video.onerror = () => { clearTimeout(t); reject(new Error(video.error && video.error.code === 4 ? 'format' : 'decode')); };
       });
       video.src = this.url; video.load();
       await ready;
-      if (!video.videoWidth) throw new Error('decode');
+      try { await video.play(); } catch (e) { /* some browsers refuse; the seek below still gives a frame */ }
+      video.pause();
+      await new Promise((resolve) => {
+        const t = setTimeout(resolve, 3000);
+        video.onseeked = () => { clearTimeout(t); resolve(); };
+        video.currentTime = 0;
+      });
+      if (!video.videoWidth) throw new Error('format');
     }
     video.muted = true;
     if (this.kind === 'file') { video.pause(); video.currentTime = 0; return; }   // waits on the first frame for calibration
@@ -144,7 +154,9 @@ async function setSource(kind, file) {
     $('stageEmpty').hidden = false; $('pill').hidden = true;
     $('stageEmpty').innerHTML = kind === 'camera'
       ? '<b>Camera unavailable</b><span>Allow camera access for this page (it needs HTTPS), or try a video clip or the demo.</span>'
-      : '<b>This browser can\u2019t play that clip</b><span>iPhone videos are usually HEVC with HDR, which only Safari plays. Open this page in Safari, or on the iPhone set Settings \u203a Camera \u203a Formats to Most Compatible and turn off HDR Video, then record again.</span>';
+      : err && err.message === 'timeout'
+        ? '<b>The clip didn\u2019t load</b><span>It took more than 20 seconds. Try a shorter clip (under a minute), or trim it in Photos first.</span>'
+        : '<b>This browser can\u2019t play that clip</b><span>iPhone videos are HEVC with HDR, which only Safari plays reliably. Open this page in Safari, or set Settings \u203a Camera \u203a Formats to Most Compatible and turn off HDR Video, then record again.</span>';
   }
   syncControls();
 }
