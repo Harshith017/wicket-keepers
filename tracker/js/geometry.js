@@ -300,3 +300,44 @@ export function calibrateStumps(img, L, W, H, stumpH = 0.711) {
   }
   return best;
 }
+
+/**
+ * Quick setup from taps on the ground along the middle of the pitch:
+ *   qFar   base of the batter's stumps (or the middle of the batting crease)
+ *   qNear  base of the stumps at the camera end
+ *   qPop   the popping crease at the camera end, in line with the stumps (1.22 m in front)
+ * plus the camera's height above the ground. With all three taps the zoom is
+ * worked out too; with two, `fGuess` is used. The camera is assumed level.
+ */
+export function calibrateFromTaps(qFar, qNear, qPop, heightM, fGuess, W, H, L) {
+  const solveF = !!qPop;
+  const cam = (p) => {
+    const [x, D, yaw, pt] = p, f = solveF ? Math.exp(p[4]) * W : fGuess, C = [x, L + D, heightM];
+    const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pt), sp = Math.sin(pt);
+    const fwd = [sy * cp, -cy * cp, -sp];
+    const right = unit(cross(fwd, [0, 0, 1])), down = cross(fwd, right);
+    return makeCam(f, W / 2, H / 2, [right, down, fwd], [-dot(right, C), -dot(down, C), -dot(fwd, C)]);
+  };
+  const pts = [[[0, 0, 0], qFar], [[0, L, 0], qNear]];
+  if (qPop) pts.push([[0, L - 1.22, 0], qPop]);
+  const res = (p) => {
+    const c = cam(p), out = [];
+    for (const [X, q] of pts) {
+      const a = project(c, X);
+      if (a[2] <= 0.1) { out.push(1e4, 1e4); continue; }
+      out.push(a[0] - q[0], a[1] - q[1]);
+    }
+    return out;
+  };
+  let best = null;
+  for (const D of [1, 3, 6, 12]) for (const x of [-1, 0, 1]) for (const lf of solveF ? [Math.log(0.5), Math.log(1), Math.log(2)] : [0]) {
+    const aim = unit([-x, -(L + D) + L * 0.5, -heightM]);
+    const p0 = [x, D, Math.atan2(aim[0], -aim[1]), Math.asin(-aim[2])];
+    if (solveF) p0.push(lf);
+    const sol = levenberg(res, p0, { iters: 100 });
+    if (!best || sol.cost < best.cost) best = sol;
+  }
+  if (!best || best.cost > 2 * pts.length || best.x[1] < 0) return null;     // the taps cannot all be met
+  const c = cam(best.x);
+  return { cam: c, distBehind: best.x[1], offset: best.x[0], fRel: c.f / W, rms: Math.sqrt(best.cost / (2 * pts.length)) };
+}

@@ -15,32 +15,38 @@ runs the real pipeline on it, showing the ground truth beside each result.
 
 ## Using it
 
-1. Tripod the phone behind the bowler's arm (or behind the keeper), at least
-   150 cm high (higher is fine), with the whole pitch in frame. It must not
-   move. The height is worked out from calibration, and the app warns if the
-   camera is below 150 cm.
-2. **Calibrate pitch**: drag the four handles onto the pitch corners (stump
-   line at each end), or switch to **Calibrate on the stumps** and mark the
-   base and top of the middle stump at each end. A magnifier shows while you
-   drag. Corners are more accurate; stumps work where the pitch edges are not
-   marked. Either way the drawn stumps should land on the real ones.
-3. Set the field on the **Field** tab (presets, drag fielders, boundary size,
-   left/right-hander) and bowl.
+1. Tripod the phone behind the bowler's stumps, level, at least 150 cm high,
+   with the whole pitch in frame. It must not move. Use 60 fps.
+2. **Calibrate pitch** (quick setup): drag three markers onto the ground: the
+   bottom of the batter's stumps (or the middle of their crease if the batter
+   hides them), the bottom of your stumps, and your popping crease in line
+   with your stumps. Enter the phone's height from the ground. The app works
+   out the rest, including the lens zoom. A magnifier shows while you drag.
+   On a fully marked pitch, the four-corner method is still available.
+3. Set the field on the **Field** tab, tap **Start session** and bowl. Each
+   ball is saved with a short video. **End session** opens the summary, where
+   **Play every ball** replays them one after another with the path drawn on.
 
 The camera is opened at 60 fps when the phone and browser allow it (the line
 under the video says what rate you actually got).
 
-Recorded clips work too (**Video clip**); for slow-motion footage set the
-slow-motion factor in Setup so times are scaled back to real time.
+Recorded clips work too (**Video clip**): the clip waits on its first frame for
+calibration, then **Start session** analyses it at quarter speed so no frame is
+skipped, and the summary opens when it ends. iPhone clips are HEVC with HDR,
+which only Safari can play; elsewhere, record with Settings › Camera › Formats ›
+Most Compatible and HDR Video off. For iPhone slo-mo clips set the slow-motion
+factor in Setup.
 
 ## How it works
 
 | File | Role |
 | --- | --- |
 | `js/detector.js` | Three-frame differencing to find small moving blobs, then links them into tracks and stitches pieces split at the bat |
-| `js/geometry.js` | Camera calibration from four pitch corners (homography → focal length and pose) or from the two middle stumps |
+| `js/geometry.js` | Camera calibration: quick setup from three ground markers and the camera height, or four pitch corners |
 | `js/physics.js` | Rebuilds the 3D path from the 2D track using gravity, drag and the bounce on the calibrated ground; finds the bounce and bat impact; simulates the shot over the field |
 | `js/maps.js` | Session pitch map and at-the-stumps map |
+| `js/clips.js` | Keeps the last seconds of frames, saves each ball's clip, replays it |
+| `js/store.js` | Sessions and clips in the browser's IndexedDB (stays on the phone) |
 | `js/field.js` | Field presets, position names, draggable top-down field |
 | `js/sim.js` | Demo scene and delivery generator (also used by the tests) |
 | `js/app.js` | UI glue |
@@ -69,8 +75,10 @@ with pixel noise, and checks the reconstruction against the truth.
 - Bat speed is derived from the ball's exit speed with a collision model, not
   measured from the bat.
 - Spin is reported as turn off the pitch, not revolutions.
-- If the ball is hidden by the batter at impact the ball is logged as
-  "Shot not seen" rather than guessed.
+- From behind the bowler, the batter's body often hides the ball before it
+  arrives. Such balls are logged as "Ball lost" with their speed, rather than
+  guessing the length or the shot.
+- Speed depends on the camera height you enter: 20 cm out is about 6 km/h.
 
 ## Design
 
