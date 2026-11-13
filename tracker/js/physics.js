@@ -138,6 +138,15 @@ function timeAtY(seg, yTarget, tMin, tMax) {
   return best;
 }
 
+const BOUNCE_KEEP = 0.85, BOUNCE_UP = 0.5, BOUNCE_W = 0.12;
+function bouncePrior(v) {
+  return [
+    () => ({ row: [BOUNCE_W, 0, 0], rhs: BOUNCE_W * BOUNCE_KEEP * v[0] }),
+    () => ({ row: [0, BOUNCE_W, 0], rhs: BOUNCE_W * BOUNCE_KEEP * v[1] }),
+    () => ({ row: [0, 0, BOUNCE_W], rhs: BOUNCE_W * BOUNCE_UP * -v[2] }),
+  ];
+}
+
 function fitShot(cam, obs, prevSeg, tA, tB, fine) {
   let best = null;
   for (const fr of fine ? [0.05, 0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.95] : [0.1, 0.3, 0.5, 0.7, 0.9]) {
@@ -268,6 +277,24 @@ export function analyseDelivery(obsIn, cam, cfg) {
       const c = pre.rss + (near ? near.rss : 0);
       if (!cand || c < cand.c) cand = { c, tb, B, pre };
     }
+    // The ball was lost for a while (often against the pitch or behind the bowler) and
+    // bounced unseen: search the gap for where and when, judged on both halves of the flight.
+    const dtTyp = (obs[N - 1].t - obs[0].t) / (N - 1);
+    if (span > 2.5 * dtTyp && nearPost.length >= 2) {
+      const lat = segPos(fitSeg(cam, obs.slice(0, k + 1), o1.t, null, false) ? fitSeg(cam, obs.slice(0, k + 1), o1.t, null, false).seg : { t0: 0, p: [0, 0, 0], v: [0, 0, 0], a: [0, 0, 0] }, o1.t)[0];
+      for (let fr = 0.1; fr < 0.95; fr += 0.2) {
+        const tb = o1.t + fr * span;
+        for (let yb = 0; yb <= L - 2; yb += 0.5) {
+          const B = [Math.max(-1.5, Math.min(1.5, isFinite(lat) ? lat : 0)), yb, RB];
+          const pre = fitSeg(cam, obs.slice(0, k + 1), tb, B, true);
+          if (!pre) continue;
+          const near = fitSeg(cam, nearPost, tb, B, false, bouncePrior(pre.seg.v));
+          if (!near) continue;
+          const c = pre.rss + near.rss;
+          if (!cand || c < cand.c) cand = { c, tb, B, pre };
+        }
+      }
+    }
     if (!cand) continue;
     const { tb, B, pre } = cand;
     const pv = pre.seg.v, ps = speed(pv);
@@ -278,7 +305,9 @@ export function analyseDelivery(obsIn, cam, cfg) {
       if (!noShot && N - 1 - m < minShot) continue;
       let post = null, rssPost = 0;
       if (m - k >= 2) {
-        post = fitSeg(cam, obs.slice(k + 1, m + 1), tb, B, false);
+        // A few frames after the bounce, seen end-on, barely show depth; a real bounce keeps
+        // most of the forward speed and comes up at a fraction of the downward speed.
+        post = fitSeg(cam, obs.slice(k + 1, m + 1), tb, B, false, bouncePrior(pv));
         if (!post) continue;
         const w = post.seg.v;
         if (w[2] < 0 || w[1] > -1 || speed(w) > ps * 1.15) continue;
@@ -358,6 +387,7 @@ export function analyseDelivery(obsIn, cam, cfg) {
         }
         out.push(3 * Math.max(0, Math.abs(x[2] - tk) - dtF) / dtF);            // bounce stays near frame k
         out.push(10 * Math.max(0, segPos(s1, obs[0].t)[1] - yMax));            // cannot be seen before it is released
+        out.push(BOUNCE_W * (x[7] - BOUNCE_KEEP * x[3]), BOUNCE_W * (x[8] - BOUNCE_KEEP * x[4]), BOUNCE_W * (x[9] + BOUNCE_UP * x[5]));
         return out;
       };
       const sol = levenberg(res, [preSeg.p[0], preSeg.p[1], tk, ...preSeg.v, preSeg.ax, ...postSeg.v], { iters: 30 });

@@ -95,6 +95,9 @@ export class Tracker {
         const b = blobs[i];
         if (Math.hypot(b.x - last.u, b.y - last.v) <= 1.5) continue;     // not moving: noise
         const d = Math.hypot(b.x - px, b.y - py);
+        // A ball moving away only shrinks. A much bigger blob on its path is the ball
+        // merged with a person (often the batter): treat the ball as hidden, don't follow it.
+        if (n >= 3 && tr.size && b.n > 1.7 * tr.size + 8) continue;
         if (d < gate) pairs.push({ ti, i, cost: d / gate - Math.min(n, 30) * 0.004 });
       }
     });
@@ -112,6 +115,7 @@ export class Tracker {
         const vx = (b.x - last.u) / dt, vy = (b.y - last.v) / dt;
         if (tr.pts.length >= 2) { tr.vx = 0.5 * tr.vx + 0.5 * vx; tr.vy = 0.5 * tr.vy + 0.5 * vy; } else { tr.vx = vx; tr.vy = vy; }
         tr.pts.push({ t, u: b.x, v: b.y });
+        if (b.n) tr.size = b.n;
         keep.push(tr);
       } else if (dt > (tr.pts.length >= 4 ? 0.11 : 0.05)) {
         if (tr.pts.length >= 6 && extent(tr) > 0.06 * W) this.closed.push(tr);

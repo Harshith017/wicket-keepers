@@ -1,31 +1,36 @@
 # Ball Tracker
 
-A single-camera cricket ball tracker that runs entirely in the browser. Point a
-phone at the pitch and each delivery is picked up automatically:
+A single-camera bowling tracker that runs in the browser. Point a phone down
+the pitch from behind the bowler and each delivery is picked up and saved with
+a short clip:
 
-- **Ball speed**, **swing** (cm, in/away) and **turn off the pitch** (degrees)
-- **Length and line**, and whether the ball was hitting the stumps
-- **Shot speed and launch angle**, with an **estimated bat speed**
-- The shot is carried out over **the field you set** to call it a six, a four,
-  a catch or a fielded ball (with runs)
+- **Ball speed**, from the time of flight between the ball leaving the hand and
+  reaching the bat, over the pitch length you set (22 or 24 yards, or custom)
+- **Length and line**, from where the ball pitched
+- A replay of every ball, where you can check and correct the three moments
+  the numbers come from (release, pitched, reached the bat)
 
-Open `tracker/` from the site (camera access needs HTTPS or `localhost`). Try
-**Demo** first: it renders a synthetic net session through a virtual camera and
-runs the real pipeline on it, showing the ground truth beside each result.
+Batting (shots, runs, the field) is switched off for now.
 
 ## Using it
 
 1. Tripod the phone behind the bowler's stumps, level, at least 150 cm high,
    with the whole pitch in frame. It must not move. Use 60 fps.
-2. **Calibrate pitch** (quick setup): drag three markers onto the ground: the
-   bottom of the batter's stumps (or the middle of their crease if the batter
-   hides them), the bottom of your stumps, and your popping crease in line
-   with your stumps. Enter the phone's height from the ground. The app works
-   out the rest, including the lens zoom. A magnifier shows while you drag.
+2. **Calibrate pitch** (quick setup): drag three markers onto the bottom and
+   the top of the batter's stumps and the bottom of your stumps, then enter
+   the phone's height from the ground. The batter's stumps (a standard 71 cm)
+   give the lens zoom. If the batter hides them, move the phone a little to one
+   side. A magnifier shows while you drag. The app assumes the two sets of
+   stumps are a full 20.12 m apart; set the real distance in Setup if your net
+   is shorter.
    On a fully marked pitch, the four-corner method is still available.
-3. Set the field on the **Field** tab, tap **Start session** and bowl. Each
-   ball is saved with a short video. **End session** opens the summary, where
-   **Play every ball** replays them one after another with the path drawn on.
+3. Tap **Start session** and bowl. Each ball is saved with a short video.
+   **End session** opens the summary.
+4. **Check the frames.** Tap a ball to replay it. Step with **‹ Frame** and
+   **Frame ›**, then tap **Release here**, **Pitched here** (and tap the ball on
+   the pitch) or **Reached bat here**. The speed, length and line update and are
+   saved. Balls whose automatic frames give an impossible speed are marked
+   "check".
 
 The camera is opened at 60 fps when the phone and browser allow it (the line
 under the video says what rate you actually got).
@@ -42,7 +47,7 @@ factor in Setup.
 | File | Role |
 | --- | --- |
 | `js/detector.js` | Three-frame differencing to find small moving blobs, then links them into tracks and stitches pieces split at the bat |
-| `js/geometry.js` | Camera calibration: quick setup from three ground markers and the camera height, or four pitch corners |
+| `js/geometry.js` | Camera calibration: quick setup from three stump markers and the camera height, or four pitch corners |
 | `js/physics.js` | Rebuilds the 3D path from the 2D track using gravity, drag and the bounce on the calibrated ground; finds the bounce and bat impact; simulates the shot over the field |
 | `js/maps.js` | Session pitch map and at-the-stumps map |
 | `js/clips.js` | Keeps the last seconds of frames, saves each ball's clip, replays it |
@@ -61,6 +66,15 @@ node tracker/test/run.mjs
 
 Generates deliveries with true physics, projects them through a virtual camera
 with pixel noise, and checks the reconstruction against the truth.
+
+## Why time of flight
+
+From behind the bowler the ball travels almost straight away from the lens. A
+full 3D fit from one camera is then very sensitive to small calibration errors,
+and on real net footage it gave inconsistent speeds. The frames the ball leaves
+the hand and reaches the bat, with the pitch length, do not depend on that. Each
+frame at 60 fps is 17 ms, so a one-frame miss moves a 140 km/h reading by about
+5 km/h. The demo, filmed from a raised synthetic camera, still uses the 3D fit.
 
 ## Limits worth knowing
 

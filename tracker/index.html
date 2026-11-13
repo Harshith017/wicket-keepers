@@ -167,7 +167,9 @@
   .pl-stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;position:relative;padding:0 8px;}
   .pl-stage canvas{max-width:100%;max-height:100%;border-radius:8px;}
   .pl-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;color:#a1a1a6;font-size:14px;}
-  .pl-bar{display:flex;gap:8px;justify-content:center;padding:12px 16px calc(12px + env(safe-area-inset-bottom));flex-wrap:wrap;}
+  .pl-bar{display:flex;gap:8px;justify-content:center;padding:12px 16px 0;flex-wrap:wrap;}
+  .pl-marks{padding-bottom:4px;}
+  .pl-hint{min-height:20px;text-align:center;font-size:13px;line-height:20px;color:#ffd84d;padding:4px 16px calc(12px + env(safe-area-inset-bottom));}
   @media (max-width:719px){ #calInfo{flex-basis:100%;} main{padding:16px 16px 96px;} .topbar{padding:0 16px;} .card{padding:16px;} }
   @media (min-width:720px){ .two{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;align-items:start;} }
 </style>
@@ -209,6 +211,10 @@
           <button data-mode="corners">Pitch corners</button>
         </div>
         <p class="muted" id="calHelp" style="margin:12px 0 0"></p>
+        <div class="row" style="margin-top:12px">
+          <label for="pitchLen" class="grow">Stumps apart<small class="muted" style="display:block">stump to stump</small></label>
+          <select id="pitchLen" class="num-in" style="width:auto"><option value="20.12">22 yards (standard)</option><option value="21.95">24 yards</option><option value="custom">Other (set in Setup)</option></select>
+        </div>
         <div class="row" id="camHRow" style="margin-top:12px">
           <label for="camH" class="grow">Phone height from the ground<small class="muted" style="display:block">measure to the camera lens</small></label>
           <input type="number" id="camH" min="50" max="600" step="1" class="num-in"> <span class="muted">cm</span>
@@ -292,7 +298,7 @@
         <div class="label">Setting up the camera</div>
         <ol class="steps">
           <li>Put the phone on a tripod <b>behind the bowler's stumps</b>, at least <b>150 cm high</b>, level, and a little to one side so the bowler doesn't block the ball. The whole pitch must be in frame and the phone must not move. Use 60 fps.</li>
-          <li>Tap <b>Calibrate pitch</b> and drag the three markers: the bottom of the batter's stumps (if the batter hides them, the middle of their crease), the bottom of the stumps at your end, and the popping crease at your end in line with your stumps. A magnifier appears while you drag. Then enter the phone's height from the ground. You only need to do this again if the phone moves.</li>
+          <li>Tap <b>Calibrate pitch</b> and drag the three markers onto the bottom and the top of the batter's stumps and the bottom of the stumps at your end. A magnifier appears while you drag. Then enter the phone's height from the ground. If the batter hides their stumps, move the phone a little to one side. Do it again whenever the phone moves.</li>
           <li>Set the field on the <b>Field</b> tab, tap <b>Start session</b> and bowl. Each ball is picked up and saved with a short video. Tap <b>End session</b> to see the summary and watch every ball again.</li>
         </ol>
       </div>
@@ -319,7 +325,7 @@
 
   <nav class="tabs"><div id="tabs">
     <button data-tab="track" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg>Track</button>
-    <button data-tab="field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><rect x="10.5" y="8" width="3" height="8" rx="1"/></svg>Field</button>
+    <button data-tab="field" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><rect x="10.5" y="8" width="3" height="8" rx="1"/></svg>Field</button>
     <button data-tab="session"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg>Session</button>
     <button data-tab="setup"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>Setup</button>
   </div></nav>
@@ -336,6 +342,14 @@
     <button class="btn" id="plNext">Next</button>
     <select class="btn" id="plRate" aria-label="Replay speed"><option value="0.25">0.25×</option><option value="0.5" selected>0.5×</option><option value="1">1×</option></select>
   </div>
+  <div class="pl-bar pl-marks">
+    <button class="btn" id="plBack" aria-label="Previous frame">‹ Frame</button>
+    <button class="btn" id="plFwd" aria-label="Next frame">Frame ›</button>
+    <button class="btn" id="mkRelease">Release here</button>
+    <button class="btn" id="mkPitch">Pitched here</button>
+    <button class="btn" id="mkBat">Reached bat here</button>
+  </div>
+  <div class="pl-hint" id="plHint"></div>
 </div>
 <video id="video" playsinline muted hidden></video>
 <script type="module" src="js/app.js"></script>
