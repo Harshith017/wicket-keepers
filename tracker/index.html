@@ -169,6 +169,8 @@
   .pl-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;color:#a1a1a6;font-size:14px;}
   .pl-bar{display:flex;gap:8px;justify-content:center;padding:12px 16px 0;flex-wrap:wrap;}
   .pl-marks{padding-bottom:4px;}
+  .pl-known{display:flex;align-items:center;gap:8px;font-size:13px;color:#a1a1a6;}
+  .pl-known input{width:84px;height:36px;padding:0 10px;border-radius:8px;border:1px solid rgba(237,237,237,.16);background:#232325;color:#ededed;}
   .pl-hint{min-height:20px;text-align:center;font-size:13px;line-height:20px;color:#ffd84d;padding:4px 16px calc(12px + env(safe-area-inset-bottom));}
   @media (max-width:719px){ #calInfo{flex-basis:100%;} main{padding:16px 16px 96px;} .topbar{padding:0 16px;} .card{padding:16px;} }
   @media (min-width:720px){ .two{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;align-items:start;} }
@@ -308,6 +310,7 @@
           <label for="sL">Pitch length<small>stumps to stumps, metres</small></label><input type="number" id="sL" min="8" max="25" step="0.01">
           <label for="sW">Marked width<small>distance between the corners you calibrate on, metres</small></label><input type="number" id="sW" min="0.5" max="6" step="0.01">
           <label for="sCal">Calibrate using<small>quick setup works anywhere; corners need a marked pitch</small></label><select id="sCal"><option value="quick">Quick (3 markers)</option><option value="corners">Pitch corners</option></select>
+          <label class="grow">Speed scale<small id="scaleInfo"></small></label><button class="btn" id="scaleReset" hidden>Reset</button>
           <label for="sUnits">Speed units</label><select id="sUnits"><option value="kmh">km/h</option><option value="mph">mph</option></select>
           <label for="sSens">Motion sensitivity<small>lower picks up fainter balls, but more noise</small></label><input type="number" id="sSens" min="15" max="150" step="5">
           <label for="sProc">Processing detail<small>higher sees a smaller ball, needs a faster phone</small></label>
@@ -348,6 +351,10 @@
     <button class="btn" id="mkRelease">Release here</button>
     <button class="btn" id="mkPitch">Pitched here</button>
     <button class="btn" id="mkBat">Reached bat here</button>
+  </div>
+  <div class="pl-bar pl-marks">
+    <label class="pl-known">Known speed <input type="number" id="knownKmh" min="30" max="170" step="1" placeholder="km/h"></label>
+    <button class="btn" id="knownSet">Use this ball to set speeds</button>
   </div>
   <div class="pl-hint" id="plHint"></div>
 </div>
