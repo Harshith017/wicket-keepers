@@ -396,7 +396,8 @@ export function analyseDelivery(obsIn, cam, cfg) {
     }
   }
   const relSpeed = speed(segVel(preSeg, tRel));
-  if (relSpeed < 8 || relSpeed > 52) return { ok: false, why: 'implausible speed' };
+  // under 36 km/h is not a delivery (usually a person moving); the fit pins to this floor when forced
+  if (relSpeed < 10 || relSpeed > 52) return { ok: false, why: 'implausible speed' };
   if (Math.abs(preSeg.ax) * (tPreEnd - tRel) ** 2 * 50 > 70) return { ok: false, why: 'implausible swing' };
   const flightT = tPreEnd - tRel;
   const swingM = 0.5 * preSeg.ax * flightT * flightT;
@@ -446,7 +447,8 @@ export function analyseDelivery(obsIn, cam, cfg) {
   return {
     ok: true, type: best.type, rms, nObs: N, fps: 1 / dtF, tEnd: obs[N - 1].t,
     // Tracking stopped in front of the stumps with frames left over: we do not know what the batter did.
-    lost: !shot && N - 1 - m >= 3 && segPos(lastSeg, obs[m].t)[1] > 0.3,
+    // or the ball was last seen well short of the batter (often hidden by the batter's body from behind the bowler)
+    lost: !shot && ((N - 1 - m >= 3 && segPos(lastSeg, obs[m].t)[1] > 0.3) || (!B && segPos(lastSeg, obs[m].t)[1] > 2)),
     release: { speed: relSpeed, pos: segPos(preSeg, tRel), t: tRel },
     bounce: B ? { x: B[0] * off, y: B[1], t: tb, speedAfter: postSeg ? speed(postSeg.v) : null } : null,
     swingCm: swingM * 100 * off,           // + = toward the off side (away from the batter), - = in

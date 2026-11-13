@@ -104,11 +104,6 @@ export class DemoSource {
     const b = [w[2], w[3]].sort((a, b) => a[0] - b[0]);
     return [s[0], s[1], b[1], b[0]].map((q) => [q[0] / this.width, q[1] / this.height]);
   }
-  /** Image positions of the middle stump: striker base, striker top, bowler top, bowler base. */
-  stumpPts() {
-    const L = this.L;
-    return [[0, 0, 0], [0, 0, 0.711], [0, L, 0.711], [0, L, 0]].map((X) => { const q = project(this.cam, X); return [q[0] / this.width, q[1] / this.height]; });
-  }
   start(onFrame) {
     this.running = true;
     const tick = () => {

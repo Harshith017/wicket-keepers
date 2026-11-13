@@ -79,34 +79,44 @@ export class Tracker {
 
   /** blobs in source-pixel coords. Returns { live, finished } where finished is null or a list of candidate observation lists. */
   update(blobs, t) {
-    const W = this.W, gateMin = 0.03 * W;
-    const used = new Array(blobs.length).fill(false);
-    this.tracks.sort((a, b) => b.pts.length - a.pts.length);
-    const keep = [];
-    for (const tr of this.tracks) {
-      const last = tr.pts[tr.pts.length - 1], dt = t - last.t;
-      if (dt <= 0) { keep.push(tr); continue; }
-      let px = last.u, py = last.v, gate;
-      if (tr.pts.length >= 2) {
-        px += tr.vx * dt; py += tr.vy * dt;
-        gate = Math.max(gateMin, 0.9 * Math.hypot(tr.vx, tr.vy) * dt);
-      } else gate = 12 * W * dt;
-      let bi = -1, bd = gate;
+    const W = this.W, gateMin = 0.025 * W;
+    const used = new Array(blobs.length).fill(false), matched = new Map();
+    // Every track predicts where it should be now. A ball moves smoothly, so an
+    // established track only looks close to its prediction; this stops a track
+    // made of random jumps from grabbing everything (including the ball).
+    const pairs = [];
+    this.tracks.forEach((tr, ti) => {
+      const n = tr.pts.length, last = tr.pts[n - 1], dt = t - last.t;
+      if (dt <= 0) return;
+      const sp = Math.hypot(tr.vx, tr.vy) * dt;
+      const px = last.u + tr.vx * dt, py = last.v + tr.vy * dt;
+      const gate = n >= 3 ? Math.max(gateMin, 0.35 * sp + 0.01 * W) : n === 2 ? Math.max(1.5 * gateMin, 0.6 * sp) : Math.min(0.15 * W, 12 * W * dt);
       for (let i = 0; i < blobs.length; i++) {
-        if (used[i]) continue;
-        const d = Math.hypot(blobs[i].x - px, blobs[i].y - py);
-        if (d < bd && Math.hypot(blobs[i].x - last.u, blobs[i].y - last.v) > 1.5) { bd = d; bi = i; }
+        const b = blobs[i];
+        if (Math.hypot(b.x - last.u, b.y - last.v) <= 1.5) continue;     // not moving: noise
+        const d = Math.hypot(b.x - px, b.y - py);
+        if (d < gate) pairs.push({ ti, i, cost: d / gate - Math.min(n, 30) * 0.004 });
       }
-      if (bi >= 0) {
-        used[bi] = true;
-        const b = blobs[bi];
-        tr.vx = (b.x - last.u) / dt; tr.vy = (b.y - last.v) / dt;
+    });
+    pairs.sort((a, b) => a.cost - b.cost);
+    for (const pr of pairs) {
+      if (used[pr.i] || matched.has(pr.ti)) continue;
+      used[pr.i] = true; matched.set(pr.ti, pr.i);
+    }
+    const keep = [];
+    this.tracks.forEach((tr, ti) => {
+      const last = tr.pts[tr.pts.length - 1], dt = t - last.t;
+      if (dt <= 0) { keep.push(tr); return; }
+      if (matched.has(ti)) {
+        const b = blobs[matched.get(ti)];
+        const vx = (b.x - last.u) / dt, vy = (b.y - last.v) / dt;
+        if (tr.pts.length >= 2) { tr.vx = 0.5 * tr.vx + 0.5 * vx; tr.vy = 0.5 * tr.vy + 0.5 * vy; } else { tr.vx = vx; tr.vy = vy; }
         tr.pts.push({ t, u: b.x, v: b.y });
         keep.push(tr);
       } else if (dt > (tr.pts.length >= 4 ? 0.11 : 0.05)) {
         if (tr.pts.length >= 6 && extent(tr) > 0.06 * W) this.closed.push(tr);
       } else keep.push(tr);
-    }
+    });
     this.tracks = keep;
     for (let i = 0; i < blobs.length && this.tracks.length < 60; i++) {
       if (!used[i]) this.tracks.push({ id: this.nextId++, pts: [{ t, u: blobs[i].x, v: blobs[i].y }], vx: 0, vy: 0 });

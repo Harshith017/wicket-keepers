@@ -149,6 +149,25 @@
     transition:background-color .15s var(--ease),color .15s var(--ease);}
   nav.tabs button.on{color:var(--ink);background:var(--raised);}
   nav.tabs svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;}
+  .calpanel{margin:12px 0 0;}
+  .num-in{width:88px;height:36px;padding:0 10px;border-radius:8px;border:1px solid var(--hair-strong);background:var(--card);}
+  .list{margin-top:8px;border-top:1px solid var(--hair);}
+  .list button{display:flex;width:100%;align-items:center;gap:12px;text-align:left;border:none;background:none;padding:12px 0;border-bottom:1px solid var(--hair);cursor:pointer;font-size:14px;line-height:20px;}
+  .list button .grow{flex:1;min-width:0;}
+  .list button.on{font-weight:500;}
+  .list button small{color:var(--ink-3);font-size:12px;}
+  tr.clickable{cursor:pointer;} tr.clickable:hover td{background:var(--raised);}
+  .player{position:fixed;inset:0;z-index:50;background:#0f0f10;color:#ededed;display:flex;flex-direction:column;}
+  .player .btn{background:#232325;border-color:rgba(237,237,237,.16);color:#ededed;}
+  .player .btn.primary{background:#ededed;color:#141415;border-color:#ededed;}
+  .pl-top{display:flex;align-items:center;gap:12px;padding:12px 16px calc(12px + env(safe-area-inset-top)) 16px;}
+  .pl-top .grow{flex:1;min-width:0;}
+  .pl-title{font-size:16px;line-height:22px;font-weight:500;}
+  .pl-sub{font-size:13px;line-height:20px;color:#a1a1a6;}
+  .pl-stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;position:relative;padding:0 8px;}
+  .pl-stage canvas{max-width:100%;max-height:100%;border-radius:8px;}
+  .pl-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;color:#a1a1a6;font-size:14px;}
+  .pl-bar{display:flex;gap:8px;justify-content:center;padding:12px 16px calc(12px + env(safe-area-inset-bottom));flex-wrap:wrap;}
   @media (max-width:719px){ #calInfo{flex-basis:100%;} main{padding:16px 16px 96px;} .topbar{padding:0 16px;} .card{padding:16px;} }
   @media (min-width:720px){ .two{display:grid;grid-template-columns:1.3fr 1fr;gap:16px;align-items:start;} }
 </style>
@@ -168,7 +187,7 @@
         <button data-src="file">Video clip</button>
         <button data-src="demo">Demo</button>
       </div>
-      <input type="file" id="fileIn" accept="video/*" hidden>
+      <input type="file" id="fileIn" accept="video/*,.mov,.mp4,.m4v" hidden>
 
       <div class="stage" id="stage">
         <canvas id="view" width="1280" height="720"></canvas>
@@ -180,13 +199,20 @@
       </div>
 
       <div class="row">
+        <button class="btn primary" id="sessBtn" disabled>Start session</button>
         <button class="btn" id="calBtn" disabled>Calibrate pitch</button>
-        <button class="btn" id="armBtn" disabled>Pause tracking</button>
         <span class="grow muted" id="calInfo"></span>
       </div>
-      <div class="seg" id="calModeSeg" style="margin-top:8px" role="group" aria-label="Calibrate on" hidden>
-        <button data-mode="corners">Use pitch corners</button>
-        <button data-mode="stumps">Use the stumps</button>
+      <div class="card calpanel" id="calPanel" hidden>
+        <div class="seg" id="calModeSeg" role="group" aria-label="Calibrate with">
+          <button data-mode="quick">Quick (3 markers)</button>
+          <button data-mode="corners">Pitch corners</button>
+        </div>
+        <p class="muted" id="calHelp" style="margin:12px 0 0"></p>
+        <div class="row" id="camHRow" style="margin-top:12px">
+          <label for="camH" class="grow">Phone height from the ground<small class="muted" style="display:block">measure to the camera lens</small></label>
+          <input type="number" id="camH" min="50" max="600" step="1" class="num-in"> <span class="muted">cm</span>
+        </div>
       </div>
 
       <div class="two" style="margin-top:16px">
@@ -225,6 +251,12 @@
 
     <!-- ================= Session ================= -->
     <section class="view" id="v-session">
+      <div class="card">
+        <div class="row">
+          <div class="grow"><div class="label" id="sessTitle">No sessions yet</div><div class="muted" id="sessMeta"></div></div>
+          <button class="btn primary" id="playAll" hidden>Play every ball</button>
+        </div>
+      </div>
       <div class="card flush">
         <div class="tiles" id="sessTiles"></div>
       </div>
@@ -245,8 +277,12 @@
         </div>
       </div>
       <div class="card">
-        <div class="row"><span class="label grow">Ball by ball</span><button class="btn warn" id="clearBtn">Clear session</button></div>
+        <div class="row"><span class="label grow">Ball by ball</span><button class="btn warn" id="clearBtn">Delete session</button></div>
         <div class="tablewrap" id="sessTable" style="margin-top:8px"></div>
+      </div>
+      <div class="card" id="pastCard" hidden>
+        <div class="label">All sessions</div>
+        <div class="list" id="sessList"></div>
       </div>
     </section>
 
@@ -255,9 +291,9 @@
       <div class="card">
         <div class="label">Setting up the camera</div>
         <ol class="steps">
-          <li>Put the phone on a tripod <b>behind the bowler's arm</b> (or behind the keeper), at least <b>150 cm high</b> (higher is fine) and a little to one side so the bowler doesn't block the ball. The whole pitch must be in frame and the phone must not move. You don't enter the height: it is worked out when you calibrate, and the app warns you if the camera is below 150 cm.</li>
-          <li>Tap <b>Calibrate pitch</b>. Either drag the four corners onto the corners of the pitch (the stump line at each end, at the pitch's edges), or switch to <b>Use the stumps</b> and mark the base and top of the middle stump at each end. A magnifier appears while you drag. Pitch corners are the more accurate of the two; use the stumps when the pitch edges aren't marked, as in most nets.</li>
-          <li>Set the field on the <b>Field</b> tab, then bowl. Each ball is picked up automatically.</li>
+          <li>Put the phone on a tripod <b>behind the bowler's stumps</b>, at least <b>150 cm high</b>, level, and a little to one side so the bowler doesn't block the ball. The whole pitch must be in frame and the phone must not move. Use 60 fps.</li>
+          <li>Tap <b>Calibrate pitch</b> and drag the three markers: the bottom of the batter's stumps (if the batter hides them, the middle of their crease), the bottom of the stumps at your end, and the popping crease at your end in line with your stumps. A magnifier appears while you drag. Then enter the phone's height from the ground. You only need to do this again if the phone moves.</li>
+          <li>Set the field on the <b>Field</b> tab, tap <b>Start session</b> and bowl. Each ball is picked up and saved with a short video. Tap <b>End session</b> to see the summary and watch every ball again.</li>
         </ol>
       </div>
       <div class="card">
@@ -265,12 +301,12 @@
         <div class="form">
           <label for="sL">Pitch length<small>stumps to stumps, metres</small></label><input type="number" id="sL" min="8" max="25" step="0.01">
           <label for="sW">Marked width<small>distance between the corners you calibrate on, metres</small></label><input type="number" id="sW" min="0.5" max="6" step="0.01">
-          <label for="sCal">Calibrate using<small>corners are more accurate; stumps work in nets with no marked pitch</small></label><select id="sCal"><option value="corners">Pitch corners</option><option value="stumps">Stumps</option></select>
+          <label for="sCal">Calibrate using<small>quick setup works anywhere; corners need a marked pitch</small></label><select id="sCal"><option value="quick">Quick (3 markers)</option><option value="corners">Pitch corners</option></select>
           <label for="sUnits">Speed units</label><select id="sUnits"><option value="kmh">km/h</option><option value="mph">mph</option></select>
           <label for="sSens">Motion sensitivity<small>lower picks up fainter balls, but more noise</small></label><input type="number" id="sSens" min="15" max="150" step="5">
           <label for="sProc">Processing detail<small>higher sees a smaller ball, needs a faster phone</small></label>
           <select id="sProc"><option value="640">Fast (640)</option><option value="960">Balanced (960)</option><option value="1280">Detailed (1280)</option><option value="1920">Max (1920)</option></select>
-          <label for="sSlow">Clip slow-motion factor<small>for recorded slow-mo clips: 240 fps played at 30 = 8</small></label><input type="number" id="sSlow" min="1" max="32" step="1">
+          <label for="sSlow">Clip slow-motion factor<small>only for iPhone slo-mo clips that play back slowed: 240 fps shown at 30 = 8</small></label><input type="number" id="sSlow" min="1" max="32" step="1">
         </div>
       </div>
       <div class="card">
@@ -287,6 +323,19 @@
     <button data-tab="session"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg>Session</button>
     <button data-tab="setup"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg>Setup</button>
   </div></nav>
+</div>
+<div class="player" id="player" hidden>
+  <div class="pl-top">
+    <div class="grow"><div class="pl-title" id="plTitle"></div><div class="pl-sub" id="plSub"></div></div>
+    <button class="btn" id="plClose">Close</button>
+  </div>
+  <div class="pl-stage"><canvas id="plCanvas"></canvas><div class="pl-msg" id="plMsg" hidden></div></div>
+  <div class="pl-bar">
+    <button class="btn" id="plPrev">Previous</button>
+    <button class="btn primary" id="plPlay">Pause</button>
+    <button class="btn" id="plNext">Next</button>
+    <select class="btn" id="plRate" aria-label="Replay speed"><option value="0.25">0.25×</option><option value="0.5" selected>0.5×</option><option value="1">1×</option></select>
+  </div>
 </div>
 <video id="video" playsinline muted hidden></video>
 <script type="module" src="js/app.js"></script>
