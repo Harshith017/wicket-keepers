@@ -2,7 +2,7 @@ import { calibrate, calibrateFromTaps, project, makeCam, groundPoint } from './g
 import { MapView } from './maps.js';
 import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack, CREASE, STUMP_H } from './physics.js';
 import { FrameRing, Player } from './clips.js';
-import { measureDelivery, looksLikeDelivery, tofSpeed, distanceFromKnown, flightDistance } from './bowling.js';
+import { measureDelivery, deliveryStart, tofSpeed, distanceFromKnown, flightDistance } from './bowling.js';
 import { CropRing, followToBatter, loadDetector } from './ml.js';
 import { putSession, allSessions, putClip, getClip, deleteSession } from './store.js';
 import { Detector, Tracker } from './detector.js';
@@ -107,7 +107,7 @@ class VideoSource {
     video.onended = () => { video.onended = null; onClipEnd(); };
     video.currentTime = 0;
     await video.play();
-    video.playbackRate = 0.25;
+    video.playbackRate = window.__clipRate || 0.25;
     if (!this.running) this.start(this.onFrame);
   }
   get paused() { return this.kind === 'file' && video.paused; }
@@ -412,10 +412,14 @@ const MAX_KMH = 165;     // faster than this, the automatic frames must be wrong
 function onTrack(candidates) {
   const W = S.source.width, L = settings.L, demo = S.source.kind === 'demo';
   let best = null;
-  for (const obs of candidates) {
+  for (const path of candidates) {
+    // it must start where the bowler lets go of the ball (anything joined on before that is dropped)
+    const i0 = deliveryStart(path, S.cam, L);
+    const obs = i0 > 0 ? path.slice(i0) : path;
     if (obs[0].t < S.lastBallEnd + 1 && obs[0].t > S.lastBallEnd - 5) continue;      // leftovers of the ball just bowled
     const a = analyseTrack(obs, S.cam, { L, hand: F.hand, rmsMax: 5 * W / 1280 });
-    if (!(a.ok || looksLikeDelivery(obs, S.cam, L))) continue;
+    // it must head from the bowler's end toward the batter's stumps
+    if (i0 < 0 && !(demo && a.ok)) continue;
     if (!best || obs.length > best.obs.length) best = { obs, a };
   }
   if (!best) { S.status = 'Saw movement, but not a delivery'; updatePill(); return; }
@@ -553,10 +557,12 @@ function renderSession() {
 // is scaled down, so crops come straight from the video.
 function batterRect() {
   const vw = video.videoWidth, vh = video.videoHeight, s = vw / view.width;
-  const q = project(S.cam, [0, 0, 0.5]);
-  const size = Math.max(240, Math.min(640, Math.round(Math.max(vw, vh) / 6)));
-  const x = Math.max(0, Math.min(vw - size, Math.round(q[0] * s - size / 2)));
-  const y = Math.max(0, Math.min(vh - size, Math.round(q[1] * s - size * 0.6)));
+  // from above the batter's head down to the middle of the pitch, where short balls pitch
+  const top = project(S.cam, [0, 0, 2.2]), mid = project(S.cam, [0, settings.L * 0.55, 0]);
+  const span = (mid[1] - top[1]) * s;
+  const size = Math.round(Math.max(Math.min(640, Math.max(vw, vh) / 6), Math.min(1280, span * 1.1), 240));
+  const x = Math.max(0, Math.min(vw - size, Math.round(top[0] * s - size / 2)));
+  const y = Math.max(0, Math.min(vh - size, Math.round(top[1] * s - size * 0.05)));
   return { x, y, w: size, h: size, s };
 }
 function captureBatterEnd(t) {
@@ -578,7 +584,7 @@ async function refineWithDetector(ball, sess) {
       ball.marks.arrive = pts[pts.length - 1].t;
       ball.arriveBy = 'detector';
       applyMarks(ball);
-    }
+    } else ball.arriveBy = 'motion';
   } catch (e) {
     ball.arriveBy = 'motion';     // the detector could not load (offline, or an old browser)
   }

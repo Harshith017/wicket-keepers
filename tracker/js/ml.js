@@ -95,7 +95,7 @@ export class CropRing {
  */
 export async function followToBatter(frames, start, toView, onProgress) {
   const pts = [];
-  let last = start, vel = null;
+  let last = start, vel = null, firstSpeed = null;
   for (let i = 0; i < frames.length; i++) {
     const f = frames[i];
     if (f.t <= last.t + 1e-4) continue;
@@ -104,23 +104,38 @@ export async function followToBatter(frames, start, toView, onProgress) {
     if (bmp.close) bmp.close();
     if (onProgress) onProgress(i / frames.length);
     const dt = f.t - last.t;
-    const px = last.u + (vel ? vel[0] * dt : 0), py = last.v + (vel ? vel[1] * dt : 0);
-    const gate = vel ? 14 + 0.6 * Math.hypot(vel[0], vel[1]) * dt : 60;
     let best = null;
+    if (!pts.length) {
+      // First pickup: the ball has often bounced since motion tracking lost it, so its
+      // old direction is no help. Take a confident detection near where it was last seen.
+      for (const h of hits) {
+        const d = Math.hypot(h.u - last.u, h.v - last.v);
+        if (h.score >= 0.4 && d < 120 + 600 * dt && (!best || h.score > best.score)) best = h;
+      }
+      if (!best) { if (dt > 0.35) break; continue; }
+      last = { t: f.t, u: best.u, v: best.v };
+      pts.push({ ...last, score: best.score });
+      continue;
+    }
+    const px = last.u + (vel ? vel[0] * dt : 0), py = last.v + (vel ? vel[1] * dt : 0);
+    const gate = vel ? 14 + 0.6 * Math.hypot(vel[0], vel[1]) * dt : 50;
     for (const h of hits) {
       const d = Math.hypot(h.u - px, h.v - py);
       if (d < gate && (!best || d - 20 * h.score < best.d - 20 * best.score)) best = { ...h, d };
     }
-    if (!best) { if (dt > 0.12) break; continue; }
-    const nv = [(best.u - last.u) / dt, (best.v - last.v) / dt];
-    // a sharp change of direction means the ball has met the bat (or pad): stop there
-    if (vel && pts.length >= 2) {
-      const a = Math.hypot(...vel), b = Math.hypot(...nv);
-      if (a > 1 && b > 1 && (vel[0] * nv[0] + vel[1] * nv[1]) / (a * b) < 0.5) break;
+    // in plain view near the batter, a few missed frames mean the bat or pad has it
+    if (!best) { if (dt > 0.06) break; continue; }
+    const nv = [(best.u - last.u) / dt, (best.v - last.v) / dt], sp = Math.hypot(nv[0], nv[1]);
+    if (vel) {
+      // a sharp change of direction, or a sharp loss of speed: it has met the bat or pad
+      const a = Math.hypot(vel[0], vel[1]);
+      if (a > 1 && sp > 1 && (vel[0] * nv[0] + vel[1] * nv[1]) / (a * sp) < 0.5) break;
+      if (firstSpeed && pts.length >= 3 && sp < 0.55 * firstSpeed) break;
     }
     vel = vel ? [0.5 * vel[0] + 0.5 * nv[0], 0.5 * vel[1] + 0.5 * nv[1]] : nv;
+    if (pts.length === 2) firstSpeed = Math.hypot(vel[0], vel[1]);
     last = { t: f.t, u: best.u, v: best.v };
-    pts.push({ t: f.t, u: best.u, v: best.v, score: best.score });
+    pts.push({ ...last, score: best.score });
   }
   return pts;
 }

@@ -67,6 +67,26 @@ node tracker/test/run.mjs
 Generates deliveries with true physics, projects them through a virtual camera
 with pixel noise, and checks the reconstruction against the truth.
 
+## Finding the ball near the batter
+
+Motion detection follows the ball from the hand down the pitch but loses it
+against the batter's whites. After each delivery, a small trained detector
+(YOLO11n, its "sports ball" class) runs on sharp, full-resolution crops of the
+batter's end to follow the ball the rest of the way. The frame where it meets
+the bat or pad (a sharp loss of speed or change of direction, or the ball
+disappearing) is the "reached bat" moment for the speed. The detector loads
+the first time a session starts (about 26 MB, then cached by the browser).
+
+On the test net clips: 108 km/h and 108 km/h for the fast bowler (known
+100-110), 83 km/h for the spinner (known 70-80), with no frames marked by hand.
+
+Third-party files in `vendor/`:
+
+- ONNX Runtime Web 1.31.1, MIT licence.
+- `yolo11n.onnx`, Ultralytics YOLO11n, **AGPL-3.0**. Fine while this code is
+  public. Running the app privately or commercially needs an Ultralytics
+  licence or a different model.
+
 ## Why time of flight
 
 From behind the bowler the ball travels almost straight away from the lens. A

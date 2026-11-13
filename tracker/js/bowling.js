@@ -87,11 +87,20 @@ export function measureDelivery(obs, cam, L, hand) {
   return out;
 }
 
-/** Looks like a delivery: heads from the bowler's end toward the batter's stumps in the picture. */
-export function looksLikeDelivery(obs, cam, L) {
-  if (obs.length < 8 || !cam) return false;
-  const far = project(cam, [0, 0, 0.4]);
-  const d0 = Math.hypot(obs[0].u - far[0], obs[0].v - far[1]);
-  const d1 = Math.min(...obs.slice(-4).map((o) => Math.hypot(o.u - far[0], o.v - far[1])));
-  return d1 < 0.8 * d0;
+/**
+ * Where a delivery starts in a tracked path: the first point near where a bowler lets
+ * go of the ball (just in front of the stumps at the camera end, about head height or
+ * above), with enough of the path after it. -1 if there is none. Paths can have other
+ * moving things joined on in front, so this need not be the first point.
+ */
+export function deliveryStart(obs, cam, L) {
+  if (!cam) return -1;
+  const W = 2 * cam.cx;
+  const hand = [[0, 2.0], [0, 2.5], [0.8, 2.2], [-0.8, 2.2]].map(([x, z]) => project(cam, [x, L - RELEASE_AHEAD, z]));
+  for (let i = 0; i + 6 <= obs.length; i++) {
+    const d = Math.min(...hand.map((q) => Math.hypot(obs[i].u - q[0], obs[i].v - q[1])));
+    if (d < 0.22 * W) return i;
+  }
+  return -1;
 }
+export const looksLikeDelivery = (obs, cam, L) => deliveryStart(obs, cam, L) === 0;
