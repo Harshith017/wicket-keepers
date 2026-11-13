@@ -138,6 +138,15 @@ function timeAtY(seg, yTarget, tMin, tMax) {
   return best;
 }
 
+const BOUNCE_KEEP = 0.85, BOUNCE_UP = 0.5, BOUNCE_W = 0.12;
+function bouncePrior(v) {
+  return [
+    () => ({ row: [BOUNCE_W, 0, 0], rhs: BOUNCE_W * BOUNCE_KEEP * v[0] }),
+    () => ({ row: [0, BOUNCE_W, 0], rhs: BOUNCE_W * BOUNCE_KEEP * v[1] }),
+    () => ({ row: [0, 0, BOUNCE_W], rhs: BOUNCE_W * BOUNCE_UP * -v[2] }),
+  ];
+}
+
 function fitShot(cam, obs, prevSeg, tA, tB, fine) {
   let best = null;
   for (const fr of fine ? [0.05, 0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85, 0.95] : [0.1, 0.3, 0.5, 0.7, 0.9]) {
@@ -278,7 +287,9 @@ export function analyseDelivery(obsIn, cam, cfg) {
       if (!noShot && N - 1 - m < minShot) continue;
       let post = null, rssPost = 0;
       if (m - k >= 2) {
-        post = fitSeg(cam, obs.slice(k + 1, m + 1), tb, B, false);
+        // A few frames after the bounce, seen end-on, barely show depth; a real bounce keeps
+        // most of the forward speed and comes up at a fraction of the downward speed.
+        post = fitSeg(cam, obs.slice(k + 1, m + 1), tb, B, false, bouncePrior(pv));
         if (!post) continue;
         const w = post.seg.v;
         if (w[2] < 0 || w[1] > -1 || speed(w) > ps * 1.15) continue;
@@ -358,6 +369,7 @@ export function analyseDelivery(obsIn, cam, cfg) {
         }
         out.push(3 * Math.max(0, Math.abs(x[2] - tk) - dtF) / dtF);            // bounce stays near frame k
         out.push(10 * Math.max(0, segPos(s1, obs[0].t)[1] - yMax));            // cannot be seen before it is released
+        out.push(BOUNCE_W * (x[7] - BOUNCE_KEEP * x[3]), BOUNCE_W * (x[8] - BOUNCE_KEEP * x[4]), BOUNCE_W * (x[9] + BOUNCE_UP * x[5]));
         return out;
       };
       const sol = levenberg(res, [preSeg.p[0], preSeg.p[1], tk, ...preSeg.v, preSeg.ax, ...postSeg.v], { iters: 30 });

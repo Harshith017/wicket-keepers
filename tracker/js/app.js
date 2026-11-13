@@ -24,7 +24,7 @@ if (!F.fielders) F.fielders = makeField(F.preset, F.hand, F.L, F.boundary);
 const S = {
   source: null, cam: null, camInfo: '', calibrating: false, armed: true,
   calibPts: saved.calibPts || [[0.42, 0.42], [0.58, 0.42], [0.72, 0.85], [0.28, 0.85]],   // striker L, striker R, bowler R, bowler L
-  quickPts: saved.quickPts || [[0.5, 0.45], [0.5, 0.92], [0.5, 0.82]],   // batter's stumps base, own stumps base, own popping crease
+  quickPts: (saved.quickPts && saved.quickPtsV === 2) ? saved.quickPts : [[0.5, 0.45], [0.5, 0.92], [0.5, 0.41]],   // batter's stumps base, own stumps base, top of batter's stumps
   session: null, sessions: [], viewSession: null,
   last: null, live: null, lastT: -1, drag: -1,
   fps: 0, fpsN: 0, fpsT0: 0, status: '', statusKind: '',
@@ -33,7 +33,7 @@ function save() {
   try {
     localStorage.setItem(STORE, JSON.stringify({
       settings, boundary: F.boundary, hand: F.hand, preset: F.preset, fielders: F.fielders,
-      calibPts: S.calibPts, quickPts: S.quickPts,
+      calibPts: S.calibPts, quickPts: S.quickPts, quickPtsV: 2,
     }));
   } catch (e) { /* storage unavailable: carry on without persistence */ }
 }
@@ -154,7 +154,7 @@ const handlePts = () => (quick() ? S.quickPts : S.calibPts);
 function demoPts(src) {
   if (!quick()) return src.corners();
   const L = settings.L;
-  return [[0, 0, 0], [0, L, 0], [0, L - CREASE, 0]].map((X) => { const q = project(src.cam, X); return [q[0] / src.width, q[1] / src.height]; });
+  return [[0, 0, 0], [0, L, 0], [0, 0, STUMP_H]].map((X) => { const q = project(src.cam, X); return [q[0] / src.width, q[1] / src.height]; });
 }
 const activePts = () => (S.source && S.source.kind === 'demo' ? demoPts(S.source) : handlePts());
 const camHeight = () => (S.source && S.source.kind === 'demo' ? S.source.cam.C[2] : settings.camH / 100);
@@ -171,7 +171,7 @@ function recalibrate() {
       S.camLow = camHeight() < MIN_CAM_HEIGHT;
       S.camInfo = `Camera ${(camHeight() * 100).toFixed(0)} cm high, ${r.distBehind.toFixed(1)} m behind your stumps`
         + (S.camLow ? `. Raise it to at least ${MIN_CAM_HEIGHT * 100} cm; this low, speed and length readings are unreliable` : '');
-    } else S.camInfo = 'Those three markers don\u2019t fit a pitch: check each is on the ground, in a line down the middle of the pitch.';
+    } else S.camInfo = 'Those markers don\u2019t fit: check they are on the bottom and top of the batter\u2019s stumps and the bottom of yours.';
   } else {
     const r = calibrate(px, settings.rectW, settings.L, W, H);
     if (r && r.rms < 0.02 * W) {
@@ -250,7 +250,7 @@ function onFrame(t) {
     const det = detector.process(pctx.getImageData(0, 0, pw, ph), t);
     if (det) {
       const k = W / pw;
-      const blobs = det.noisy ? [] : det.blobs.map((b) => ({ x: b.x * k, y: b.y * k, n: b.n }));
+      const blobs = det.noisy ? [] : det.blobs.map((b) => ({ x: b.x * k, y: b.y * k, n: b.n }));   // n stays in detector pixels: only ratios are used
       const res = tracker.update(blobs, det.t);
       S.live = res.live;
       if (res.finished) onTrack(res.finished);
@@ -328,7 +328,7 @@ function drawOverlay(W, H) {
     const shown = view.getBoundingClientRect().width;
     const k = shown ? view.width / shown : W / 1280;
     const stumps = false;
-    const names = quick() ? ['Batter\u2019s stumps', 'Your stumps', 'Popping crease'] : ['Striker end', 'Striker end', 'Bowler end', 'Bowler end'];
+    const names = quick() ? ['Bottom of batter\u2019s stumps', 'Bottom of your stumps', 'Top of batter\u2019s stumps'] : ['Striker end', 'Striker end', 'Bowler end', 'Bowler end'];
     handlePts().forEach((p, i) => {
       const x = p[0] * W, y = p[1] * H, held = S.drag === i;
       // Stump handles sit off to the side with a pointer, so they never cover the stump itself.
@@ -745,7 +745,7 @@ function syncControls() {
   $('camHRow').hidden = !quick();
   $('camH').value = settings.camH;
   $('calHelp').textContent = quick()
-    ? 'Drag each marker onto the ground: the bottom of the batter\u2019s stumps (if the batter hides them, the middle of their crease), the bottom of your stumps, and your popping crease in line with your stumps. Then enter the phone\u2019s height.'
+    ? 'Drag the markers onto the bottom and the top of the batter\u2019s stumps, and the bottom of your stumps. If the batter hides their stumps, move the phone a little to one side. Then enter the phone\u2019s height from the ground.'
     : 'Drag the four corners onto the corners of the pitch: the stump line at each end, at the edges of the pitch.';
   $('sCal').value = settings.calMode;
   document.querySelectorAll('#calModeSeg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === settings.calMode));

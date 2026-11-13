@@ -17,11 +17,13 @@ runs the real pipeline on it, showing the ground truth beside each result.
 
 1. Tripod the phone behind the bowler's stumps, level, at least 150 cm high,
    with the whole pitch in frame. It must not move. Use 60 fps.
-2. **Calibrate pitch** (quick setup): drag three markers onto the ground: the
-   bottom of the batter's stumps (or the middle of their crease if the batter
-   hides them), the bottom of your stumps, and your popping crease in line
-   with your stumps. Enter the phone's height from the ground. The app works
-   out the rest, including the lens zoom. A magnifier shows while you drag.
+2. **Calibrate pitch** (quick setup): drag three markers onto the bottom and
+   the top of the batter's stumps and the bottom of your stumps, then enter
+   the phone's height from the ground. The batter's stumps (a standard 71 cm)
+   give the lens zoom. If the batter hides them, move the phone a little to one
+   side. A magnifier shows while you drag. The app assumes the two sets of
+   stumps are a full 20.12 m apart; set the real distance in Setup if your net
+   is shorter.
    On a fully marked pitch, the four-corner method is still available.
 3. Set the field on the **Field** tab, tap **Start session** and bowl. Each
    ball is saved with a short video. **End session** opens the summary, where
@@ -42,7 +44,7 @@ factor in Setup.
 | File | Role |
 | --- | --- |
 | `js/detector.js` | Three-frame differencing to find small moving blobs, then links them into tracks and stitches pieces split at the bat |
-| `js/geometry.js` | Camera calibration: quick setup from three ground markers and the camera height, or four pitch corners |
+| `js/geometry.js` | Camera calibration: quick setup from three stump markers and the camera height, or four pitch corners |
 | `js/physics.js` | Rebuilds the 3D path from the 2D track using gravity, drag and the bounce on the calibrated ground; finds the bounce and bat impact; simulates the shot over the field |
 | `js/maps.js` | Session pitch map and at-the-stumps map |
 | `js/clips.js` | Keeps the last seconds of frames, saves each ball's clip, replays it |

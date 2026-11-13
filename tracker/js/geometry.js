@@ -302,15 +302,15 @@ export function calibrateStumps(img, L, W, H, stumpH = 0.711) {
 }
 
 /**
- * Quick setup from taps on the ground along the middle of the pitch:
+ * Quick setup from three markers:
  *   qFar   base of the batter's stumps (or the middle of the batting crease)
  *   qNear  base of the stumps at the camera end
- *   qPop   the popping crease at the camera end, in line with the stumps (1.22 m in front)
- * plus the camera's height above the ground. With all three taps the zoom is
- * worked out too; with two, `fGuess` is used. The camera is assumed level.
+ *   qTop   top of the batter's stumps (standard stumps are 71.1 cm tall)
+ * plus the camera's height above the ground. The stump top gives the zoom;
+ * without it `fGuess` is used. The camera is assumed level.
  */
-export function calibrateFromTaps(qFar, qNear, qPop, heightM, fGuess, W, H, L) {
-  const solveF = !!qPop;
+export function calibrateFromTaps(qFar, qNear, qTop, heightM, fGuess, W, H, L) {
+  const solveF = !!qTop;
   const cam = (p) => {
     const [x, D, yaw, pt] = p, f = solveF ? Math.exp(p[4]) * W : fGuess, C = [x, L + D, heightM];
     const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pt), sp = Math.sin(pt);
@@ -319,7 +319,7 @@ export function calibrateFromTaps(qFar, qNear, qPop, heightM, fGuess, W, H, L) {
     return makeCam(f, W / 2, H / 2, [right, down, fwd], [-dot(right, C), -dot(down, C), -dot(fwd, C)]);
   };
   const pts = [[[0, 0, 0], qFar], [[0, L, 0], qNear]];
-  if (qPop) pts.push([[0, L - 1.22, 0], qPop]);
+  if (qTop) pts.push([[0, 0, 0.711], qTop]);
   const res = (p) => {
     const c = cam(p), out = [];
     for (const [X, q] of pts) {
