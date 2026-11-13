@@ -2,7 +2,7 @@ import { calibrate, calibrateFromTaps, project, makeCam, groundPoint } from './g
 import { MapView } from './maps.js';
 import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack, CREASE, STUMP_H } from './physics.js';
 import { FrameRing, Player } from './clips.js';
-import { measureDelivery, looksLikeDelivery, tofSpeed } from './bowling.js';
+import { measureDelivery, looksLikeDelivery, tofSpeed, distanceFromKnown, flightDistance } from './bowling.js';
 import { putSession, allSessions, putClip, getClip, deleteSession } from './store.js';
 import { Detector, Tracker } from './detector.js';
 import { FieldView, makeField, positionName, PRESETS } from './field.js';
@@ -443,7 +443,7 @@ function onTrack(candidates) {
 /** Speed from release to bat, and length and line from where the ball pitched. */
 function applyMarks(b) {
   const mk = b.marks, L = b.L || settings.L;
-  b.speed = tofSpeed(mk.release, mk.arrive, L);
+  b.speed = tofSpeed(mk.release, mk.arrive, L, settings.flightDist);
   b.length = null; b.bx = null; b.line = null; b.sz = null; b.hitting = false;
   if (mk.pitch && mk.pitch.u != null) {
     const cam = b.cam ? makeCam(b.cam.f, b.cam.cx, b.cam.cy, b.cam.R, b.cam.t) : S.cam;
@@ -680,6 +680,27 @@ function marksChanged() {
   saveSession(PL.sess); renderSession(); if (S.last && S.last.ball === b) renderResult();
   player.draw();
 }
+// One ball of known speed sets the real release-to-bat distance for this net.
+$('knownSet').addEventListener('click', () => {
+  const b = PL.ball, v = +$('knownKmh').value;
+  if (!b || !b.marks || !(v >= 30 && v <= 170)) { $('plHint').textContent = 'Enter the ball\u2019s speed in km/h first.'; return; }
+  settings.flightDist = distanceFromKnown(b.marks.release, b.marks.arrive, (settings.units === 'mph' ? v * 1.609 : v) / 3.6);
+  save();
+  for (const x of S.sessions) { let changed = false; for (const y of x.balls) if (y.marks && !y.truth) { applyMarks(y); changed = true; } if (changed) saveSession(x); }
+  $('plHint').textContent = `Speeds now use ${settings.flightDist.toFixed(1)} m from release to bat (from this ball). Every ball has been updated.`;
+  $('plSub').textContent = ballSummary(b);
+  renderSession(); renderResult(); syncSpeedScale();
+});
+function syncSpeedScale() {
+  const d = flightDistance(settings.L, settings.flightDist);
+  $('scaleInfo').textContent = settings.flightDist ? `Set from a ball of known speed: ${d.toFixed(1)} m from release to bat.` : `From the pitch length: ${d.toFixed(1)} m from release to bat. Set a ball of known speed in the replay for accurate speeds.`;
+  $('scaleReset').hidden = !settings.flightDist;
+}
+$('scaleReset').addEventListener('click', () => {
+  settings.flightDist = null; save();
+  for (const x of S.sessions) { for (const y of x.balls) if (y.marks && !y.truth) applyMarks(y); saveSession(x); }
+  renderSession(); renderResult(); syncSpeedScale();
+});
 $('plBack').addEventListener('click', () => stepFrame(-1));
 $('plFwd').addEventListener('click', () => stepFrame(1));
 $('mkRelease').addEventListener('click', () => { if (!player.clip) return; PL.ball.marks.release = player.pos; marksChanged(); });
@@ -844,6 +865,6 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && S.source && navigator.wakeLock && !wakeLock) navigator.wakeLock.request('screen').then((l) => { wakeLock = l; }).catch(() => {});
 });
 
-syncField(); syncControls(); renderScore(); loadSessions();
+syncField(); syncControls(); renderScore(); loadSessions(); syncSpeedScale();
 window.__tracker = { S, F, settings };
 window.__pl = player;      // handy for debugging from the console

@@ -59,12 +59,16 @@ export function imageBounce(obs) {
   return { t: obs[iMax].t, u: obs[iMax].u, v: obs[iMax].v };
 }
 
-/** Release speed (m/s) from the flight time over the pitch of length L. */
-export function tofSpeed(tRelease, tArrive, L) {
+/** Distance the ball travels from release to bat, unless a known ball has set it. */
+export const flightDistance = (L, known) => (known > 3 ? known : L - RELEASE_AHEAD - CONTACT_AHEAD);
+/** Release speed (m/s) from the flight time; `known` is a distance set from a ball of known speed. */
+export function tofSpeed(tRelease, tArrive, L, known) {
   const dt = tArrive - tRelease;
   if (!(dt > 0.15)) return null;
-  return (L - RELEASE_AHEAD - CONTACT_AHEAD) / dt * RELEASE_OVER_AVERAGE;
+  return flightDistance(L, known) / dt * RELEASE_OVER_AVERAGE;
 }
+/** The release-to-bat distance that makes this ball the given speed (m/s). */
+export const distanceFromKnown = (tRelease, tArrive, speed) => speed / RELEASE_OVER_AVERAGE * (tArrive - tRelease);
 
 /**
  * Bowling numbers for a tracked delivery: { tRelease, tArrive, speed, bounce: { t, u, v, x, y } }.
@@ -74,7 +78,7 @@ export function tofSpeed(tRelease, tArrive, L) {
 export function measureDelivery(obs, cam, L, hand) {
   const tRelease = obs[0].t - 1 / 120;           // the ball left the hand about half a frame before it was first seen clear
   const tArrive = obs[obs.length - 1].t;         // last seen: usually as it reaches the batter
-  const out = { tRelease, tArrive, speed: tofSpeed(tRelease, tArrive, L), bounce: null };
+  const out = { tRelease, tArrive, speed: tofSpeed(tRelease, tArrive, L), bounce: null };   // speed is rescaled by the app if a known ball set the distance
   const b = imageBounce(obs);
   if (b && cam) {
     const g = groundPoint(cam, b.u, b.v, 0.036);
