@@ -3,6 +3,7 @@ import { MapView } from './maps.js';
 import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack, CREASE, STUMP_H } from './physics.js';
 import { FrameRing, Player } from './clips.js';
 import { measureDelivery, looksLikeDelivery, tofSpeed, distanceFromKnown, flightDistance } from './bowling.js';
+import { CropRing, followToBatter, loadDetector } from './ml.js';
 import { putSession, allSessions, putClip, getClip, deleteSession } from './store.js';
 import { Detector, Tracker } from './detector.js';
 import { FieldView, makeField, positionName, PRESETS } from './field.js';
@@ -39,7 +40,7 @@ function save() {
   } catch (e) { /* storage unavailable: carry on without persistence */ }
 }
 
-const detector = new Detector(), tracker = new Tracker(), ring = new FrameRing();
+const detector = new Detector(), tracker = new Tracker(), ring = new FrameRing(), crops = new CropRing();
 const curBalls = () => (S.session ? S.session.balls : []);
 const view = $('view'), vctx = view.getContext('2d');
 const proc = document.createElement('canvas'), pctx = proc.getContext('2d', { willReadFrequently: true });
@@ -254,6 +255,7 @@ function onFrame(t) {
   src.drawTo(vctx, W, H);
   if (S.drag >= 0) grabLoupe(W, H);
   if (S.session) ring.capture(view, t);
+  if (S.session && S.cam && src.kind !== 'demo') captureBatterEnd(t);
 
   if (S.session && S.cam && !S.calibrating) {
     const pw = Math.min(W, settings.procW), ph = Math.round(H * pw / W);
@@ -441,7 +443,8 @@ function onTrack(candidates) {
   }
   const sess = S.session;
   sess.balls.push(ball);
-  ring.extract(obs[0].t - 0.6, obs[obs.length - 1].t + 0.5).then(async (clip) => {
+  if (!demo) refineWithDetector(ball, sess);
+  ring.extract(obs[0].t - 0.6, obs[obs.length - 1].t + 0.9).then(async (clip) => {
     if (!clip) return;
     ball.clip = `${sess.id}/${sess.balls.indexOf(ball)}`;
     try { await putClip(ball.clip, clip); } catch (e) { clipMemory.set(ball.clip, clip); }
@@ -545,6 +548,44 @@ function renderSession() {
   $('sessTable').innerHTML = `<table><thead><tr><th>#</th><th class="num">Speed ${unit()}</th><th>Length</th><th>Line</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+// ---------------------------------------------------------------- the batter's end, at full resolution
+// The detector needs a sharp picture of the ball near the batter; the working frame
+// is scaled down, so crops come straight from the video.
+function batterRect() {
+  const vw = video.videoWidth, vh = video.videoHeight, s = vw / view.width;
+  const q = project(S.cam, [0, 0, 0.5]);
+  const size = Math.max(240, Math.min(640, Math.round(Math.max(vw, vh) / 6)));
+  const x = Math.max(0, Math.min(vw - size, Math.round(q[0] * s - size / 2)));
+  const y = Math.max(0, Math.min(vh - size, Math.round(q[1] * s - size * 0.6)));
+  return { x, y, w: size, h: size, s };
+}
+function captureBatterEnd(t) {
+  if (!video.videoWidth) return;
+  crops.capture(video, batterRect(), t);
+}
+/** After a delivery: follow the ball into the batter with the detector, for the "reached bat" moment. */
+async function refineWithDetector(ball, sess) {
+  const last = ball.obs[ball.obs.length - 1], start = { t: last[0], u: last[1], v: last[2] };
+  const frames = await crops.between(start.t - 0.02, start.t + 0.7);
+  if (!frames.length) { ball.arriveBy = 'motion'; return; }
+  const s = video.videoWidth / ball.cam.W;
+  const toView = (r, x, y) => ({ u: (r.x + x * r.w / 640) / s, v: (r.y + y * r.h / 640) / s });
+  S.status = 'Finding where the ball met the bat\u2026'; updatePill();
+  try {
+    const pts = await followToBatter(frames, start, toView);
+    if (pts.length) {
+      ball.obs.push(...pts.map((p) => [+p.t.toFixed(4), Math.round(p.u), Math.round(p.v)]));
+      ball.marks.arrive = pts[pts.length - 1].t;
+      ball.arriveBy = 'detector';
+      applyMarks(ball);
+    }
+  } catch (e) {
+    ball.arriveBy = 'motion';     // the detector could not load (offline, or an old browser)
+  }
+  S.status = 'Ready \u2014 waiting for the next ball';
+  saveSession(sess); renderResult(); renderSession(); updatePill();
+}
+
 // ---------------------------------------------------------------- sessions
 const clipMemory = new Map();          // clips kept in memory if the browser will not store them
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -565,7 +606,8 @@ function startSession() {
   S.session = { id: newId(), startedAt: Date.now(), endedAt: null, hand: F.hand, L: settings.L, balls: [] };
   S.sessions.unshift(S.session);
   S.viewSession = S.session; S.last = null; S.status = '';
-  detector.reset(); tracker.reset(); ring.reset(); S.lastT = -1;
+  detector.reset(); tracker.reset(); ring.reset(); crops.reset(); S.lastT = -1;
+  if (S.source && S.source.kind !== 'demo') loadDetector().catch(() => {});
   if (S.source && S.source.kind === 'file') S.source.playFromStart().catch(() => {});
   saveSession(S.session);
   renderResult(); renderScore(); renderSession(); syncControls();
