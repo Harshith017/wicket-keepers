@@ -277,6 +277,24 @@ export function analyseDelivery(obsIn, cam, cfg) {
       const c = pre.rss + (near ? near.rss : 0);
       if (!cand || c < cand.c) cand = { c, tb, B, pre };
     }
+    // The ball was lost for a while (often against the pitch or behind the bowler) and
+    // bounced unseen: search the gap for where and when, judged on both halves of the flight.
+    const dtTyp = (obs[N - 1].t - obs[0].t) / (N - 1);
+    if (span > 2.5 * dtTyp && nearPost.length >= 2) {
+      const lat = segPos(fitSeg(cam, obs.slice(0, k + 1), o1.t, null, false) ? fitSeg(cam, obs.slice(0, k + 1), o1.t, null, false).seg : { t0: 0, p: [0, 0, 0], v: [0, 0, 0], a: [0, 0, 0] }, o1.t)[0];
+      for (let fr = 0.1; fr < 0.95; fr += 0.2) {
+        const tb = o1.t + fr * span;
+        for (let yb = 0; yb <= L - 2; yb += 0.5) {
+          const B = [Math.max(-1.5, Math.min(1.5, isFinite(lat) ? lat : 0)), yb, RB];
+          const pre = fitSeg(cam, obs.slice(0, k + 1), tb, B, true);
+          if (!pre) continue;
+          const near = fitSeg(cam, nearPost, tb, B, false, bouncePrior(pre.seg.v));
+          if (!near) continue;
+          const c = pre.rss + near.rss;
+          if (!cand || c < cand.c) cand = { c, tb, B, pre };
+        }
+      }
+    }
     if (!cand) continue;
     const { tb, B, pre } = cand;
     const pv = pre.seg.v, ps = speed(pv);
