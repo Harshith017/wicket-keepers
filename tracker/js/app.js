@@ -1,7 +1,8 @@
-import { calibrate, calibrateFromTaps, project, makeCam } from './geometry.js';
+import { calibrate, calibrateFromTaps, project, makeCam, groundPoint } from './geometry.js';
 import { MapView } from './maps.js';
 import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack, CREASE, STUMP_H } from './physics.js';
 import { FrameRing, Player } from './clips.js';
+import { measureDelivery, looksLikeDelivery, tofSpeed } from './bowling.js';
 import { putSession, allSessions, putClip, getClip, deleteSession } from './store.js';
 import { Detector, Tracker } from './detector.js';
 import { FieldView, makeField, positionName, PRESETS } from './field.js';
@@ -353,25 +354,22 @@ function drawOverlay(W, H) {
     for (const p of S.live) { c.beginPath(); c.arc(p.u, p.v, 3.5 * k, 0, 7); c.fill(); }
   }
   const last = S.last;
-  if (last && S.cam && performance.now() - last.shownAt < 9000) {
-    const colors = { pre: '#ffd84d', post: '#ff9f43', shot: '#63e6ff' };
-    for (const sg of last.samples) {
-      poly(sg.pts, 'rgba(0,0,0,.55)', 7, W);
-      poly(sg.pts, colors[sg.kind], 3.5, W);
-    }
-    if (last.bounce3) {
-      const p = project(S.cam, last.bounce3);
-      c.beginPath(); c.arc(p[0], p[1], 7 * k, 0, 7); c.fillStyle = '#ff9f43'; c.fill();
-      c.lineWidth = 2 * k; c.strokeStyle = '#1b1b1b'; c.stroke();
-    }
-  } else if (last && performance.now() - last.shownAt >= 9000) S.last.samples = [];
+  if (last && last.ball.obs && performance.now() - last.shownAt < 9000) {
+    // the path the last ball was tracked along, and where it pitched
+    c.beginPath();
+    last.ball.obs.forEach(([, u, v], i) => { if (i) c.lineTo(u, v); else c.moveTo(u, v); });
+    c.lineJoin = 'round'; c.strokeStyle = 'rgba(0,0,0,.55)'; c.lineWidth = 7 * k; c.stroke();
+    c.strokeStyle = '#ffd84d'; c.lineWidth = 3.5 * k; c.stroke();
+    const pt = last.ball.marks && last.ball.marks.pitch;
+    if (pt && pt.u != null) { c.beginPath(); c.arc(pt.u, pt.v, 8 * k, 0, 7); c.lineWidth = 3 * k; c.strokeStyle = '#ff9f43'; c.stroke(); }
+  }
 }
 
 // ---------------------------------------------------------------- a ball
 const spd = (ms) => (settings.units === 'mph' ? ms * 2.23694 : ms * 3.6);
 const unit = () => (settings.units === 'mph' ? 'mph' : 'km/h');
 
-const lengthText = (b) => (b.unseenEnd ? 'Not seen' : b.length == null ? 'Full toss' : lengthName(b.length));
+const lengthText = (b) => (b.length == null ? 'Not seen' : lengthName(b.length));
 function lengthName(y) {
   if (y < 2) return 'Yorker';
   if (y < 6) return 'Full';
@@ -396,72 +394,69 @@ function shotDirection(az) {
   return offS ? 'fine on the off side' : 'fine down the leg side';
 }
 
+const MAX_KMH = 165;     // faster than this, the automatic frames must be wrong
 function onTrack(candidates) {
-  const W = S.source.width;
-  let r = null;
+  const W = S.source.width, L = settings.L, demo = S.source.kind === 'demo';
+  let best = null;
   for (const obs of candidates) {
-    if (obs[0].t < S.lastBallEnd + 1 && obs[0].t > S.lastBallEnd - 5) continue;      // leftovers of the ball just scored
-    const a = analyseTrack(obs, S.cam, { L: settings.L, hand: F.hand, rmsMax: 5 * W / 1280 });
-    if (a.ok && (!r || a.rms < r.rms)) r = a;
+    if (obs[0].t < S.lastBallEnd + 1 && obs[0].t > S.lastBallEnd - 5) continue;      // leftovers of the ball just bowled
+    const a = analyseTrack(obs, S.cam, { L, hand: F.hand, rmsMax: 5 * W / 1280 });
+    if (!(a.ok || looksLikeDelivery(obs, S.cam, L))) continue;
+    if (!best || obs.length > best.obs.length) best = { obs, a };
   }
-  if (!r) { S.status = 'Saw movement, but not a delivery'; updatePill(); return; }
-  S.lastBallEnd = r.tEnd;
-  const field = { L: settings.L, boundary: F.boundary, fielders: F.fielders };
-  const ball = {
-    at: Date.now(), speed: r.release.speed, swingCm: r.swingCm, turnDeg: r.turnDeg,
-    length: r.bounce ? r.bounce.y : null, line: r.atStumps ? r.atStumps.x : null,
-    hitting: !!(r.atStumps && r.atStumps.hitting), fps: Math.round(r.fps),
-    bx: r.bounce ? r.bounce.x : null, sz: r.atStumps ? r.atStumps.z : null, hand: F.hand,
-    unseenEnd: !!(r.lost && !r.bounce),          // lost before it pitched: length unknown
-  };
-  if (r.shot) {
-    const sim = simulateShot(r.shot.impact, r.shot.v, field);
-    ball.outcome = sim.outcome; ball.runs = runsFor(sim, settings.L);
-    ball.by = sim.by ? sim.by.id : null; ball.byName = sim.by ? positionName(sim.by, F.hand) : null;
-    ball.shotSpeed = r.shot.speed; ball.batSpeed = r.shot.batSpeed; ball.elev = r.shot.elevDeg; ball.az = r.shot.azimDeg;
-    const step = Math.max(1, Math.ceil(sim.path.length / 40));
-    ball.path = sim.path.filter((_, i) => i % step === 0 || i === sim.path.length - 1).map((p) => [+p[0].toFixed(1), +p[1].toFixed(1)]);
-    ball.carry = sim.firstBounce ? Math.hypot(sim.firstBounce[0] - r.shot.impact[0], sim.firstBounce[1] - r.shot.impact[1]) : null;
+  if (!best) { S.status = 'Saw movement, but not a delivery'; updatePill(); return; }
+  const { obs, a: r } = best;
+  const m = measureDelivery(obs, S.cam, L, F.hand);
+  S.lastBallEnd = obs[obs.length - 1].t;
+  const ball = { at: Date.now(), hand: F.hand, L, fps: Math.round((obs.length - 1) / (obs[obs.length - 1].t - obs[0].t)), obs: obs.map((o) => [+o.t.toFixed(4), Math.round(o.u), Math.round(o.v)]) };
+  if (demo && r.ok) {
+    // the demo is filmed from a raised camera where the full 3D fit is reliable
+    ball.speed = r.release.speed; ball.swingCm = r.swingCm; ball.turnDeg = r.turnDeg;
+    ball.length = r.bounce ? r.bounce.y : null; ball.bx = r.bounce ? r.bounce.x : null;
+    ball.line = r.atStumps ? r.atStumps.x : null; ball.sz = r.atStumps ? r.atStumps.z : null; ball.hitting = !!(r.atStumps && r.atStumps.hitting);
+    ball.marks = { release: r.release.t, arrive: m.tArrive, pitch: r.bounce ? { t: r.bounce.t } : null };
   } else {
-    ball.outcome = r.lost ? 'LOST' : ball.hitting ? 'BOWLED' : 'DOT'; ball.runs = 0;
+    ball.marks = { release: m.tRelease, arrive: m.tArrive, pitch: m.bounce ? { t: m.bounce.t, u: m.bounce.u, v: m.bounce.v } : null };
+    applyMarks(ball);
+    ball.swingCm = null; ball.turnDeg = null;            // not measurable from behind the bowler with one camera
   }
-  // what the replay needs: the camera and the path with times
+  ball.check = !(ball.speed > 0) || ball.speed * 3.6 > MAX_KMH;
   const c = S.cam;
   ball.cam = { f: c.f, cx: c.cx, cy: c.cy, R: c.R, t: c.t, W: S.source.width, H: S.source.height };
-  ball.trail = trailOf(r.segments);
-  ball.bounceT = r.bounce ? r.bounce.t : null;
   if (S.source.kind === 'demo' && S.source.lastTruth) {
     const T = S.source.lastTruth;
-    ball.truth = { speed: T.speed, swingCm: T.swingCm, turnDeg: T.turnDeg, shotSpeed: T.shot ? T.shot.speed : null };
+    ball.truth = { speed: T.speed, swingCm: T.swingCm, turnDeg: T.turnDeg, length: T.bounce ? T.bounce.y : null };
   }
   const sess = S.session;
   sess.balls.push(ball);
-  const t0 = Math.min(r.release.t, ...ball.trail.map((g) => g.pts[0][3])) - 0.5, t1 = r.tEnd + 0.4;
-  ring.extract(t0, t1).then(async (clip) => {
+  ring.extract(obs[0].t - 0.6, obs[obs.length - 1].t + 0.5).then(async (clip) => {
     if (!clip) return;
     ball.clip = `${sess.id}/${sess.balls.indexOf(ball)}`;
     try { await putClip(ball.clip, clip); } catch (e) { clipMemory.set(ball.clip, clip); }
     saveSession(sess);
   });
-  S.last = {
-    ball, shownAt: performance.now(), samples: sampleSegments(r.segments),
-    bounce3: r.bounce ? [r.bounce.x * (F.hand === 'L' ? -1 : 1), r.bounce.y, 0] : null,
-  };
-  S.status = 'Ready — waiting for the next ball';
+  S.last = { ball, shownAt: performance.now() };
+  S.status = 'Ready \u2014 waiting for the next ball';
   saveSession(sess); renderResult(); renderScore(); updatePill();
 }
 
-function headline(b) {
-  switch (b.outcome) {
-    case 'SIX': return ['Six', 'six', 'Cleared the rope on the full.'];
-    case 'FOUR': return ['Four', 'six', 'Beat the field and reached the boundary.'];
-    case 'CAUGHT': return ['Caught', 'out', `Taken at ${b.byName.toLowerCase()}.`];
-    case 'BOWLED': return ['Bowled', 'out', 'No shot connected and the ball was hitting the stumps.'];
-    case 'DOT': return ['No shot', '', 'Through to the keeper.'];
-    case 'LOST': return ['Ball lost', '', b.unseenEnd ? 'Lost sight of the ball before it reached the batter (from behind the bowler the batter often hides it), so the shot isn\u2019t scored.' : 'Lost the ball at the batter, so the shot isn\u2019t scored.'];
-    default: return [b.runs ? `${b.runs} run${b.runs > 1 ? 's' : ''}` : 'Dot ball', '',
-      b.byName ? `Fielded at ${b.byName.toLowerCase()}.` : 'Stopped in the outfield.'];
+/** Speed from release to bat, and length and line from where the ball pitched. */
+function applyMarks(b) {
+  const mk = b.marks, L = b.L || settings.L;
+  b.speed = tofSpeed(mk.release, mk.arrive, L);
+  b.length = null; b.bx = null; b.line = null; b.sz = null; b.hitting = false;
+  if (mk.pitch && mk.pitch.u != null) {
+    const cam = b.cam ? makeCam(b.cam.f, b.cam.cx, b.cam.cy, b.cam.R, b.cam.t) : S.cam;
+    const g = cam && groundPoint(cam, mk.pitch.u, mk.pitch.v, 0.036);
+    if (g && g[1] > -1 && g[1] < L) { b.length = g[1]; b.bx = g[0] * (b.hand === 'L' ? -1 : 1); b.line = b.bx; }
   }
+  b.check = !(b.speed > 0) || b.speed * 3.6 > MAX_KMH;
+}
+
+function headline(b) {
+  const sp = b.speed > 0 ? `${spd(b.speed).toFixed(0)} ${unit()}` : 'Speed not measured';
+  return [sp, '', b.check ? 'Check the release and bat frames in the replay: the automatic ones look wrong.'
+    : (b.length != null ? `${lengthName(b.length)}, ${lineName(b.line).toLowerCase()}.` : 'Where it pitched wasn\u2019t seen. You can mark it in the replay.')];
 }
 const isFigure = (v) => /^[\d.\u2014/ \u00d7-]+$/.test(String(v));
 const tile = (label, value, u, note) => `<div class="tile"><div class="label">${label}</div><div class="v${isFigure(value) ? '' : ' word'}">${value}${u ? `<small>${u}</small>` : ''}</div>${note ? `<div class="n">${note}</div>` : ''}</div>`;
@@ -479,42 +474,30 @@ function turnText(b) {
 }
 function renderResult() {
   const last = S.last;
-  $('result').hidden = !last; $('miniCard').hidden = !last;
+  $('result').hidden = !last; $('miniCard').hidden = true;
   if (!last) return;
   const b = last.ball, [h, cls, sub] = headline(b);
   $('resLabel').textContent = `Ball ${curBalls().length}`;
   $('resHead').textContent = h; $('resHead').className = 'head ' + cls;
-  $('resSub').textContent = b.shotSpeed ? `${sub} Hit ${shotDirection(b.az)}.` : sub;
-  const sw = swingText(b), tn = turnText(b);
-  let html = tile('Ball speed', spd(b.speed).toFixed(0), unit(), b.fps < 45 ? `from ${b.fps} fps video` : '')
-    + tile('Bat speed', b.batSpeed != null ? spd(b.batSpeed).toFixed(0) : '—', b.batSpeed != null ? unit() : '', b.batSpeed != null ? 'estimated from the shot' : 'no shot played')
-    + tile('Swing', sw[0], sw[1], sw[2])
-    + tile('Turn off the pitch', tn[0], tn[1], tn[2])
+  $('resSub').textContent = sub;
+  const sw = swingText(b);
+  $('resTiles').innerHTML = tile('Speed', b.speed > 0 ? spd(b.speed).toFixed(0) : '\u2014', b.speed > 0 ? unit() : '', b.check ? 'check in the replay' : 'out of the hand')
     + tile('Length', lengthText(b), '', b.length == null ? '' : `pitched ${b.length.toFixed(1)} m from the stumps`)
-    + tile('Line', b.line === null ? '—' : lineName(b.line), '', b.line === null ? '' : b.hitting ? 'hitting the stumps' : 'missing the stumps');
-  if (b.shotSpeed) {
-    html += tile('Off the bat', spd(b.shotSpeed).toFixed(0), unit(), `launched ${b.elev.toFixed(0)}° ${b.elev >= 0 ? 'up' : 'down'}`);
-    if (b.carry) html += tile('Carry', b.carry.toFixed(0), 'm', 'to where it first landed');
-  }
-  $('resTiles').innerHTML = html;
+    + tile('Line', b.line == null ? '\u2014' : lineName(b.line), '', b.line == null ? '' : `${Math.abs(b.line * 100).toFixed(0)} cm ${b.line >= 0 ? 'off' : 'leg'} side of middle`)
+    + tile('Swing', sw[0], sw[1], b.swingCm == null ? 'needs a side-on or raised camera' : sw[2]);
   const tr = $('resTruth');
   tr.hidden = !b.truth;
   if (b.truth) {
     const T = b.truth;
-    tr.textContent = `Demo ground truth: ball ${spd(T.speed).toFixed(0)} ${unit()}`
-      + (T.swingCm != null ? `, swing ${Math.abs(T.swingCm).toFixed(0)} cm` : '')
-      + (T.turnDeg != null ? `, turn ${Math.abs(T.turnDeg).toFixed(1)}°` : '')
-      + (T.shotSpeed ? `, off the bat ${spd(T.shotSpeed).toFixed(0)} ${unit()}` : ', no shot') + '.';
+    tr.textContent = `Demo ground truth: ${spd(T.speed).toFixed(0)} ${unit()}` + (T.length != null ? `, pitched ${T.length.toFixed(1)} m` : '') + (T.swingCm != null ? `, swing ${Math.abs(T.swingCm).toFixed(0)} cm` : '') + '.';
   }
-  mini.shots = curBalls().filter((x) => x.path); mini.highlight = b.path ? b : null;
-  mini.draw();
 }
 
 function renderScore() {
   const B = curBalls();
   const runs = B.reduce((a, b) => a + (b.runs || 0), 0);
   const wk = B.filter((b) => b.outcome === 'CAUGHT' || b.outcome === 'BOWLED').length;
-  $('score').innerHTML = S.session ? `<b>${runs}/${wk}</b> · ${B.length} ball${B.length === 1 ? '' : 's'}` : '';
+  $('score').innerHTML = S.session ? `${B.length} ball${B.length === 1 ? '' : 's'}` : '';
 }
 const when = (ms) => new Date(ms).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 function renderSession() {
@@ -535,22 +518,19 @@ function renderSession() {
     $('sessTable').innerHTML = ''; $('clearBtn').disabled = !V; return;
   }
   $('clearBtn').disabled = false;
-  const runs = B.reduce((a, b) => a + (b.runs || 0), 0), wk = B.filter((b) => b.outcome === 'CAUGHT' || b.outcome === 'BOWLED').length;
-  const speeds = B.map((b) => b.speed), bats = B.filter((b) => b.batSpeed != null).map((b) => b.batSpeed);
-  $('sessTiles').innerHTML = tile('Score', `${runs}/${wk}`, '', `${B.length} balls`)
-    + tile('Fastest ball', spd(Math.max(...speeds)).toFixed(0), unit())
-    + tile('Average ball', spd(speeds.reduce((a, v) => a + v, 0) / speeds.length).toFixed(0), unit())
-    + tile('Top bat speed', bats.length ? spd(Math.max(...bats)).toFixed(0) : '—', bats.length ? unit() : '')
-    + tile('Boundaries', `${B.filter((b) => b.outcome === 'FOUR').length} × 4`, '', `${B.filter((b) => b.outcome === 'SIX').length} × 6`);
+  const speeds = B.filter((b) => b.speed > 0 && !b.check).map((b) => b.speed), lens = B.filter((b) => b.length != null);
+  $('sessTiles').innerHTML = tile('Balls', B.length, '', B.some((b) => b.check) ? `${B.filter((b) => b.check).length} to check` : '')
+    + tile('Fastest', speeds.length ? spd(Math.max(...speeds)).toFixed(0) : '\u2014', speeds.length ? unit() : '')
+    + tile('Average', speeds.length ? spd(speeds.reduce((a, v) => a + v, 0) / speeds.length).toFixed(0) : '\u2014', speeds.length ? unit() : '')
+    + tile('Good length', lens.length ? `${lens.filter((b) => b.length >= 6 && b.length < 8).length}/${lens.length}` : '\u2014', '', 'pitched 6\u20138 m from the stumps');
   let rows = '';
   for (let i = B.length - 1; i >= 0; i--) {
-    const b = B[i], sw = swingText(b), tn = turnText(b);
-    rows += `<tr class="${b.clip ? 'clickable' : ''}" data-ball="${i}"><td>${i + 1}</td><td><b>${headline(b)[0]}</b>${b.byName && b.outcome !== 'SIX' && b.outcome !== 'FOUR' ? `<br><span class="muted">${b.byName}</span>` : ''}</td>`
-      + `<td class="num">${spd(b.speed).toFixed(0)}</td><td class="num">${b.batSpeed != null ? spd(b.batSpeed).toFixed(0) : '—'}</td>`
-      + `<td>${sw[1] ? `${sw[0]} cm ${b.swingCm > 0 ? 'away' : 'in'}` : sw[0]}</td><td>${tn[1] ? `${tn[0]}° ${b.turnDeg > 0 ? 'away' : 'in'}` : tn[0]}</td>`
-      + `<td>${lengthText(b)}</td></tr>`;
+    const b = B[i];
+    rows += `<tr class="${b.clip ? 'clickable' : ''}" data-ball="${i}"><td>${i + 1}</td>`
+      + `<td class="num">${b.speed > 0 ? spd(b.speed).toFixed(0) : '\u2014'}${b.check ? ' <span class="muted">check</span>' : ''}</td>`
+      + `<td>${lengthText(b)}</td><td>${b.line == null ? '\u2014' : lineName(b.line)}</td></tr>`;
   }
-  $('sessTable').innerHTML = `<table><thead><tr><th>#</th><th>Result</th><th class="num">Ball ${unit()}</th><th class="num">Bat ${unit()}</th><th>Swing</th><th>Turn</th><th>Length</th></tr></thead><tbody>${rows}</tbody></table>`;
+  $('sessTable').innerHTML = `<table><thead><tr><th>#</th><th class="num">Speed ${unit()}</th><th>Length</th><th>Line</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 // ---------------------------------------------------------------- sessions
@@ -623,43 +603,43 @@ function showTab(name) {
 // ---------------------------------------------------------------- replay
 const PL = { sess: null, i: 0, all: false, ball: null, cam: null };
 const player = new Player($('plCanvas'), (ctx, clip, t, atEnd) => {
-  const b = PL.ball, cam = PL.cam;
-  if (!b || !cam) return;
-  const k = clip.w / b.cam.W, lw = Math.max(2, 3 * clip.w / 720);
-  const colors = { pre: '#ffd84d', post: '#ff9f43', shot: '#63e6ff' };
-  // the path so far, drawn on top of the video
-  for (const g of b.trail || []) {
-    ctx.beginPath();
-    let pen = false;
-    for (const p of g.pts) {
-      if (!atEnd && p[3] > t) break;
-      const q = project(cam, p);
-      if (q[2] <= 0.2) { pen = false; continue; }
-      if (pen) ctx.lineTo(q[0] * k, q[1] * k); else ctx.moveTo(q[0] * k, q[1] * k);
-      pen = true;
-    }
-    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-    ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = lw + 3; ctx.stroke();
-    ctx.strokeStyle = colors[g.kind] || '#ffd84d'; ctx.lineWidth = lw; ctx.stroke();
+  const b = PL.ball;
+  if (!b || !b.cam) return;
+  const k = clip.w / b.cam.W, r = Math.max(2, 2.5 * clip.w / 720);
+  // the path the ball was tracked along, up to now
+  ctx.beginPath();
+  let n = 0;
+  for (const [ot, u, v] of b.obs || []) { if (!atEnd && ot > t + 1e-4) break; if (n++) ctx.lineTo(u * k, v * k); else ctx.moveTo(u * k, v * k); }
+  ctx.lineJoin = 'round'; ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = r + 2; ctx.stroke();
+  ctx.strokeStyle = '#ffd84d'; ctx.lineWidth = r; ctx.stroke();
+  const mk = b.marks || {};
+  if (mk.pitch && mk.pitch.u != null && (atEnd || t >= mk.pitch.t - 1e-3)) {
+    ctx.beginPath(); ctx.arc(mk.pitch.u * k, mk.pitch.v * k, r * 2.4, 0, 7);
+    ctx.lineWidth = r; ctx.strokeStyle = '#ff9f43'; ctx.stroke();
   }
-  if (b.bounceT != null && (atEnd || t >= b.bounceT) && b.bx != null) {
-    const q = project(cam, [b.bx * (b.hand === 'L' ? -1 : 1), b.length, 0]);
-    ctx.beginPath(); ctx.arc(q[0] * k, q[1] * k, lw * 2.2, 0, 7); ctx.fillStyle = '#ff9f43'; ctx.fill();
+  // which moment this frame is
+  const tags = [];
+  if (Math.abs(t - mk.release) < 0.009) tags.push('Release');
+  if (mk.pitch && Math.abs(t - mk.pitch.t) < 0.009) tags.push('Pitched');
+  if (Math.abs(t - mk.arrive) < 0.009) tags.push('Reached bat');
+  if (tags.length) {
+    ctx.font = `600 ${Math.round(14 * clip.w / 540)}px Geist, sans-serif`; ctx.textAlign = 'left';
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.strokeText(tags.join(' \u00b7 '), 12, 28 * clip.w / 540);
+    ctx.fillStyle = '#ffd84d'; ctx.fillText(tags.join(' \u00b7 '), 12, 28 * clip.w / 540);
   }
 });
 function ballSummary(b) {
-  const bits = [`${spd(b.speed).toFixed(0)} ${unit()}`, lengthText(b)];
+  const bits = [b.speed > 0 ? `${spd(b.speed).toFixed(0)} ${unit()}` : 'speed \u2014', lengthText(b)];
   if (b.line != null) bits.push(lineName(b.line));
-  const sw = swingText(b);
-  if (sw[1]) bits.push(`swing ${sw[0]} cm ${b.swingCm > 0 ? 'away' : 'in'}`);
-  if (b.batSpeed != null) bits.push(`bat ${spd(b.batSpeed).toFixed(0)} ${unit()}`);
+  if (b.check) bits.push('check the frames');
   return bits.join(' \u00b7 ');
 }
 async function showBall(i) {
   const sess = PL.sess, b = sess.balls[i];
   PL.i = i; PL.ball = b;
   PL.cam = b.cam ? makeCam(b.cam.f, b.cam.cx, b.cam.cy, b.cam.R, b.cam.t) : null;
-  $('plTitle').textContent = `Ball ${i + 1} of ${sess.balls.length} \u00b7 ${headline(b)[0]}`;
+  $('plTitle').textContent = `Ball ${i + 1} of ${sess.balls.length}`;
+  PL.awaitPitch = false;
   $('plSub').textContent = ballSummary(b);
   $('plPrev').disabled = i === 0; $('plNext').disabled = i === sess.balls.length - 1;
   let clip = null;
@@ -686,6 +666,38 @@ $('plPlay').addEventListener('click', () => { if (player.playing) { player.pause
 $('plNext').addEventListener('click', () => { PL.all = false; if (PL.i < PL.sess.balls.length - 1) showBall(PL.i + 1); });
 $('plPrev').addEventListener('click', () => { PL.all = false; if (PL.i > 0) showBall(PL.i - 1); });
 $('plRate').addEventListener('change', () => { player.rate = +$('plRate').value; });
+async function stepFrame(d) {
+  if (!player.clip) return;
+  player.pause(); $('plPlay').textContent = 'Play';
+  player.idx = Math.max(0, Math.min(player.clip.times.length - 1, player.idx + d));
+  player.pos = player.clip.times[player.idx];
+  await player.draw();
+}
+function marksChanged() {
+  const b = PL.ball;
+  applyMarks(b);
+  $('plSub').textContent = ballSummary(b);
+  saveSession(PL.sess); renderSession(); if (S.last && S.last.ball === b) renderResult();
+  player.draw();
+}
+$('plBack').addEventListener('click', () => stepFrame(-1));
+$('plFwd').addEventListener('click', () => stepFrame(1));
+$('mkRelease').addEventListener('click', () => { if (!player.clip) return; PL.ball.marks.release = player.pos; marksChanged(); });
+$('mkBat').addEventListener('click', () => { if (!player.clip) return; PL.ball.marks.arrive = player.pos; marksChanged(); });
+$('mkPitch').addEventListener('click', () => {
+  if (!player.clip) return;
+  player.pause(); $('plPlay').textContent = 'Play';
+  PL.awaitPitch = true;
+  $('plHint').textContent = 'Tap the ball where it touches the pitch.';
+});
+$('plCanvas').addEventListener('click', (e) => {
+  if (!PL.awaitPitch || !player.clip) return;
+  const r = $('plCanvas').getBoundingClientRect(), b = PL.ball, k = player.clip.w / b.cam.W;
+  const u = (e.clientX - r.left) / r.width * player.clip.w / k, v = (e.clientY - r.top) / r.height * player.clip.h / k;
+  b.marks.pitch = { t: player.pos, u, v };
+  PL.awaitPitch = false; $('plHint').textContent = '';
+  marksChanged();
+});
 
 // ---------------------------------------------------------------- session maps
 const describeBall = (b, i) => `Ball ${i + 1} \u00b7 ${spd(b.speed).toFixed(0)} ${unit()} \u00b7 ${lengthText(b).toLowerCase()}${b.line == null ? '' : ', ' + lineName(b.line).toLowerCase()}`;
@@ -744,6 +756,7 @@ function syncControls() {
   $('calPanel').hidden = !S.calibrating;
   $('camHRow').hidden = !quick();
   $('camH').value = settings.camH;
+  $('pitchLen').value = [20.12, 21.95].includes(settings.L) ? String(settings.L) : 'custom';
   $('calHelp').textContent = quick()
     ? 'Drag the markers onto the bottom and the top of the batter\u2019s stumps, and the bottom of your stumps. If the batter hides their stumps, move the phone a little to one side. Then enter the phone\u2019s height from the ground.'
     : 'Drag the four corners onto the corners of the pitch: the stump line at each end, at the edges of the pitch.';
@@ -765,6 +778,11 @@ $('calModeSeg').addEventListener('click', (e) => {
 $('fileIn').addEventListener('change', (e) => { const f = e.target.files[0]; if (f) setSource('file', f); e.target.value = ''; });
 $('calBtn').addEventListener('click', () => { S.calibrating = !S.calibrating; detector.reset(); tracker.reset(); if (!S.calibrating) save(); syncControls(); refresh(); });
 $('sessBtn').addEventListener('click', () => { if (S.session) endSession(true); else startSession(); });
+$('pitchLen').addEventListener('change', () => {
+  const v = $('pitchLen').value;
+  if (v === 'custom') { showTab('setup'); return; }
+  settings.L = +v; $('sL').value = settings.L; F.L = settings.L; save(); recalibrate(); refresh(); updatePill();
+});
 $('camH').addEventListener('input', () => {
   const v = +$('camH').value;
   if (v >= 50 && v <= 600) { settings.camH = v; recalibrate(); save(); updatePill(); refresh(); }
@@ -827,4 +845,5 @@ document.addEventListener('visibilitychange', () => {
 });
 
 syncField(); syncControls(); renderScore(); loadSessions();
-window.__tracker = { S, F, settings };      // handy for debugging from the console
+window.__tracker = { S, F, settings };
+window.__pl = player;      // handy for debugging from the console
