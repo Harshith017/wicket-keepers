@@ -114,7 +114,7 @@ export class Tracker {
         const b = blobs[matched.get(ti)];
         const vx = (b.x - last.u) / dt, vy = (b.y - last.v) / dt;
         if (tr.pts.length >= 2) { tr.vx = 0.5 * tr.vx + 0.5 * vx; tr.vy = 0.5 * tr.vy + 0.5 * vy; } else { tr.vx = vx; tr.vy = vy; }
-        tr.pts.push({ t, u: b.x, v: b.y });
+        tr.pts.push({ t, u: b.x, v: b.y, n: b.n });
         if (b.n) tr.size = b.n;
         keep.push(tr);
       } else if (dt > (tr.pts.length >= 4 ? 0.11 : 0.05)) {
@@ -123,7 +123,7 @@ export class Tracker {
     });
     this.tracks = keep;
     for (let i = 0; i < blobs.length && this.tracks.length < 60; i++) {
-      if (!used[i]) this.tracks.push({ id: this.nextId++, pts: [{ t, u: blobs[i].x, v: blobs[i].y }], vx: 0, vy: 0 });
+      if (!used[i]) this.tracks.push({ id: this.nextId++, pts: [{ t, u: blobs[i].x, v: blobs[i].y, n: blobs[i].n }], vx: 0, vy: 0 });
     }
 
     let live = null;

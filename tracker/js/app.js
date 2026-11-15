@@ -2,8 +2,9 @@ import { calibrate, calibrateFromTaps, project, makeCam, groundPoint } from './g
 import { MapView } from './maps.js';
 import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack, CREASE, STUMP_H } from './physics.js';
 import { FrameRing, Player } from './clips.js';
-import { measureDelivery, deliveryStart, tofSpeed, distanceFromKnown, flightDistance } from './bowling.js';
+import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance } from './bowling.js';
 import { CropRing, followToBatter, loadDetector } from './ml.js';
+import { findStumps, findNearStump, findFarStumps } from './stumps.js';
 import { putSession, allSessions, putClip, getClip, deleteSession } from './store.js';
 import { Detector, Tracker } from './detector.js';
 import { FieldView, makeField, positionName, PRESETS } from './field.js';
@@ -148,7 +149,8 @@ async function setSource(kind, file) {
     $('stageEmpty').hidden = true; $('pill').hidden = false;
     recalibrate();
     src.start(onFrame);
-    if (kind === 'file') S.status = 'Clip loaded \u2014 check the markers, then Start session';
+    if (kind === 'file') S.status = 'Clip loaded \u2014 finding the stumps\u2026';
+    if (kind !== 'demo') setTimeout(async () => { const ok = await autoCalibrate(false); S.status = ok ? (kind === 'file' ? 'Stumps found \u2014 tap Start session' : 'Stumps found \u2014 ready') : 'Couldn\u2019t find the stumps \u2014 tap Calibrate pitch'; updatePill(); }, kind === 'file' ? 300 : 1200);
     if (navigator.wakeLock && !wakeLock) navigator.wakeLock.request('screen').then((l) => { wakeLock = l; l.addEventListener('release', () => { wakeLock = null; }); }).catch(() => {});
   } catch (err) {
     document.querySelectorAll('#srcSeg button').forEach((b) => b.classList.remove('on'));
@@ -215,6 +217,7 @@ function canvasPos(e) {
 // Where a handle is drawn relative to the point it marks (stump handles sit to one side).
 const handleOffset = () => 0;
 view.addEventListener('pointerdown', (e) => {
+  if (S.tapStep) { onStumpTap(e); return; }
   if (!S.calibrating) return;
   const [x, y, sc] = canvasPos(e), ar = view.height / view.width;
   let bi = -1, bd = 44 / (sc * view.width);
@@ -235,7 +238,7 @@ view.addEventListener('pointermove', (e) => {
   recalibrate();
   refresh();
 });
-const endDrag = () => { if (S.drag >= 0) { S.drag = -1; save(); refresh(); syncControls(); } };
+const endDrag = () => { if (S.drag >= 0) { S.drag = -1; save(); refresh(); syncControls(); grabFrame().then(rememberStumps); } };
 // A paused clip has no new frames coming, so redraw by hand.
 function refresh() { if (S.source && S.source.paused) onFrame(Math.max(0, S.lastT)); }
 view.addEventListener('pointerup', endDrag); view.addEventListener('pointercancel', endDrag);
@@ -253,12 +256,14 @@ function onFrame(t) {
   if (t < S.lastT || t - S.lastT > 1.5) { detector.reset(); tracker.reset(); S.live = null; S.lastBallEnd = -100; }
   S.lastT = t;
   src.drawTo(vctx, W, H);
+  if (S.wantFrame) { const r = S.wantFrame; S.wantFrame = null; r(vctx.getImageData(0, 0, W, H)); }
   if (S.drag >= 0) grabLoupe(W, H);
   if (S.session) ring.capture(view, t);
   if (S.session && S.cam && src.kind !== 'demo') captureBatterEnd(t);
 
   if (S.session && S.cam && !S.calibrating) {
     const pw = Math.min(W, settings.procW), ph = Math.round(H * pw / W);
+    S.procScale = pw / 720;
     if (proc.width !== pw || proc.height !== ph) { proc.width = pw; proc.height = ph; }
     pctx.drawImage(view, 0, 0, pw, ph);
     detector.thr = settings.sens;
@@ -286,6 +291,8 @@ function updatePill() {
   else if (S.camLow && !S.live) { txt = `Camera too low \u2014 raise it to ${MIN_CAM_HEIGHT * 100} cm or more`; kind = 'bad'; }
   else if (S.live) { txt = 'Tracking…'; kind = 'busy'; }
   else txt = S.status || `Recording \u00b7 ${S.session.balls.length} ball${S.session.balls.length === 1 ? '' : 's'}`;
+  if (S.realignedAt && performance.now() - S.realignedAt < 2500 && S.cam) txt = 'Stand moved \u2014 re-aligned to the stumps';
+  if (S.tapStep) { txt = S.tapStep === 'near' ? 'Tap your stump' : 'Tap the batter\u2019s stumps'; kind = 'busy'; }
   if (S.fps) txt += ` · ${Math.round(S.fps)} fps`;
   $('pillTxt').textContent = txt;
   $('pillDot').className = 'dot ' + kind;
@@ -409,17 +416,23 @@ function shotDirection(az) {
 }
 
 const MAX_KMH = 165;     // faster than this, the automatic frames must be wrong
+const MIN_KMH = 30;      // slower than this is not a bowled ball
+const MIN_RELEASE_PX = 50;   // moving pixels (in a 720-wide frame) a ball covers at least just out of the hand
 function onTrack(candidates) {
   const W = S.source.width, L = settings.L, demo = S.source.kind === 'demo';
   let best = null;
   for (const path of candidates) {
     // it must start where the bowler lets go of the ball (anything joined on before that is dropped)
-    const i0 = deliveryStart(path, S.cam, L);
+    const minSize = demo ? 0 : MIN_RELEASE_PX * (S.procScale || 1) ** 2;
+    const i0 = deliveryStart(path, S.cam, L, minSize);
     const obs = i0 > 0 ? path.slice(i0) : path;
-    if (obs[0].t < S.lastBallEnd + 1 && obs[0].t > S.lastBallEnd - 5) continue;      // leftovers of the ball just bowled
+    // nobody bowls twice within a couple of seconds: anything that soon is the last ball moving on
+    if (obs[0].t < S.lastBallEnd + 2.5 && obs[0].t > S.lastBallEnd - 5) continue;
     const a = analyseTrack(obs, S.cam, { L, hand: F.hand, rmsMax: 5 * W / 1280 });
     // it must head from the bowler's end toward the batter's stumps
     if (i0 < 0 && !(demo && a.ok)) continue;
+    // and stay on this pitch: not a ball in the next net, a throw back, or someone walking past
+    if (!demo && !deliveryCheck(obs, S.cam, L, minSize).ok) continue;
     if (!best || obs.length > best.obs.length) best = { obs, a };
   }
   if (!best) { S.status = 'Saw movement, but not a delivery'; updatePill(); return; }
@@ -446,17 +459,35 @@ function onTrack(candidates) {
     ball.truth = { speed: T.speed, swingCm: T.swingCm, turnDeg: T.turnDeg, length: T.bounce ? T.bounce.y : null };
   }
   const sess = S.session;
+  // keep the frames now, before they roll out of memory; the ball is only added once it checks out
+  const clip = ring.extract(obs[0].t - 0.6, obs[obs.length - 1].t + 0.9);
+  if (demo) { addBall(sess, ball, clip); return; }
+  S.status = 'Checking the ball\u2026'; updatePill();
+  S.pending = (S.pending || 0) + 1;
+  refineWithDetector(ball).finally(() => { S.pending--; }).then(() => {
+    const kmh = ball.speed * 3.6;
+    // far too slow or fast for a bowled ball, or it never got to the batter: something else moved
+    const end = ball.obs[ball.obs.length - 1];
+    if (!(kmh >= MIN_KMH && kmh <= MAX_KMH) || !reachesBatter({ u: end[1], v: end[2] }, S.cam)) {
+      S.status = 'Ignored something that was not a delivery'; updatePill();
+      return;
+    }
+    addBall(sess, ball, clip);
+  });
+}
+
+function addBall(sess, ball, clipPromise) {
+  if (!sess.balls) return;
   sess.balls.push(ball);
-  if (!demo) refineWithDetector(ball, sess);
-  ring.extract(obs[0].t - 0.6, obs[obs.length - 1].t + 0.9).then(async (clip) => {
+  clipPromise.then(async (clip) => {
     if (!clip) return;
     ball.clip = `${sess.id}/${sess.balls.indexOf(ball)}`;
     try { await putClip(ball.clip, clip); } catch (e) { clipMemory.set(ball.clip, clip); }
     saveSession(sess);
   });
-  S.last = { ball, shownAt: performance.now() };
-  S.status = 'Ready \u2014 waiting for the next ball';
-  saveSession(sess); renderResult(); renderScore(); updatePill();
+  if (S.session === sess) S.last = { ball, shownAt: performance.now() };
+  S.status = S.session ? 'Ready \u2014 waiting for the next ball' : '';
+  saveSession(sess); renderResult(); renderScore(); renderSession(); updatePill();
 }
 
 /** Speed from release to bat, and length and line from where the ball pitched. */
@@ -552,6 +583,123 @@ function renderSession() {
   $('sessTable').innerHTML = `<table><thead><tr><th>#</th><th class="num">Speed ${unit()}</th><th>Length</th><th>Line</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+// ---------------------------------------------------------------- finding the stumps
+// Calibration without dragging: the app finds your stump and the batter's stumps
+// in the picture, and keeps finding them as the session runs, so a stand that
+// shifts or wobbles is followed.
+function grabFrame() {
+  return new Promise((resolve) => { S.wantFrame = resolve; refresh(); setTimeout(() => { if (S.wantFrame === resolve) { S.wantFrame = null; resolve(null); } }, 1500); });
+}
+const median = (a) => { const s = a.slice().sort((x, y) => x - y); return s[s.length >> 1]; };
+function showCalHint(text) { $('calHelp').textContent = text; S.calHint = text; updatePill(); }
+function applyStumps(near, far, W, H) {
+  S.quickPts = [[far.x / W, far.base / H], [near.x / W, near.base / H], [far.x / W, far.top / H]];
+  if (settings.calMode !== 'quick') settings.calMode = 'quick';
+  recalibrate(); save(); syncControls(); refresh();
+  grabFrame().then(rememberStumps);
+}
+/** Look at several frames, keep the answer they agree on. */
+async function autoCalibrate(user) {
+  if (!S.source || S.source.kind === 'demo') return false;
+  if (user) showCalHint('Looking for the stumps\u2026');
+  const found = [];
+  const n = S.source.paused ? 1 : 7;
+  let W = 0, H = 0;
+  for (let k = 0; k < n; k++) {
+    const img = await grabFrame();
+    if (img) { W = img.width; H = img.height; const r = findStumps(img); if (r) found.push(r); }
+    if (k < n - 1) await new Promise((r) => setTimeout(r, 160));
+  }
+  const need = n === 1 ? 1 : 4;
+  if (found.length >= need) {
+    const near = { x: median(found.map((r) => r.near.x)), base: median(found.map((r) => r.near.base)) };
+    const far = { x: median(found.map((r) => r.far.x)), base: median(found.map((r) => r.far.base)), top: median(found.map((r) => r.far.top)) };
+    const agree = found.filter((r) => Math.abs(r.far.x - far.x) <= 4 && Math.abs(r.far.base - far.base) <= 5 && Math.abs(r.near.x - near.x) <= 4).length;
+    if (agree >= Math.max(1, Math.ceil(found.length * 0.6)) && far.base - far.top > 0.008 * H) {
+      applyStumps(near, far, W, H);
+      showCalHint(S.cam ? 'Stumps found. Check the yellow markers sit on the bottom and top of the batter\u2019s stumps and the bottom of yours; drag one if not.' : 'Stumps found, but they don\u2019t fit together. Tap the stumps instead.');
+      return !!S.cam;
+    }
+  }
+  showCalHint('Couldn\u2019t find the stumps clearly. Tap \u201cTap the stumps\u201d and tap each one instead.');
+  return false;
+}
+async function onStumpTap(e) {
+  const [fx, fy] = canvasPos(e), W = view.width, H = view.height, p = [fx * W, fy * H];
+  e.preventDefault();
+  if (S.tapStep === 'near') { S.taps.near = p; S.tapStep = 'far'; showCalHint('Now tap the batter\u2019s stumps.'); return; }
+  S.taps.far = p; S.tapStep = null;
+  const img = await grabFrame();
+  let near = img && findNearStump(img, S.taps.near), far = near && findFarStumps(img, near, S.taps.far);
+  // nothing clear near a tap: use the tap itself and let the markers be fine-tuned
+  if (!near) near = { x: S.taps.near[0], base: S.taps.near[1] };
+  if (!far) far = { x: S.taps.far[0], base: S.taps.far[1] + 0.012 * H, top: S.taps.far[1] - 0.012 * H };
+  applyStumps(near, far, W, H);
+  showCalHint('Placed. If a yellow marker is off, drag it onto the bottom or top of the stump.');
+}
+// While a session runs, follow the picture if the stand moves. At calibration the
+// areas around both sets of stumps are remembered; each check finds where those
+// patches have moved to and shifts the markers with them.
+function lumPatch(img, x0, y0, w, h) {
+  const out = new Float32Array(w * h), W = img.width, d = img.data;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const xx = Math.min(W - 1, Math.max(0, x0 + x)), yy = Math.min(img.height - 1, Math.max(0, y0 + y)), i = (yy * W + xx) * 4;
+    out[y * w + x] = 0.3 * d[i] + 0.59 * d[i + 1] + 0.11 * d[i + 2];
+  }
+  return out;
+}
+function patchAround(img, cx, top, bottom, padX) {
+  const x0 = Math.round(cx - padX), y0 = Math.round(top), w = Math.round(2 * padX), h = Math.max(8, Math.round(bottom - top));
+  return { x0, y0, w, h, lum: lumPatch(img, x0, y0, w, h) };
+}
+/** Best shift of a remembered patch in a new frame, searched within +-R pixels. */
+function findShift(img, ref, R) {
+  const big = lumPatch(img, ref.x0 - R, ref.y0 - R, ref.w + 2 * R, ref.h + 2 * R), bw = ref.w + 2 * R;
+  const cost = (dx, dy) => {
+    let s = 0;
+    for (let y = 0; y < ref.h; y += 2) { const ro = y * ref.w, bo = (y + dy + R) * bw + dx + R; for (let x = 0; x < ref.w; x += 2) s += Math.abs(ref.lum[ro + x] - big[bo + x]); }
+    return s;
+  };
+  let best = { dx: 0, dy: 0, c: cost(0, 0) };
+  const c0 = best.c;
+  for (let dy = -R; dy <= R; dy += 3) for (let dx = -R; dx <= R; dx += 3) { const c = cost(dx, dy); if (c < best.c) best = { dx, dy, c }; }
+  const b0 = best;
+  for (let dy = b0.dy - 2; dy <= b0.dy + 2; dy++) for (let dx = b0.dx - 2; dx <= b0.dx + 2; dx++) {
+    if (Math.abs(dx) > R || Math.abs(dy) > R) continue;
+    const c = cost(dx, dy); if (c < best.c) best = { dx, dy, c };
+  }
+  return { ...best, gain: c0 > 0 ? best.c / c0 : 1 };
+}
+function rememberStumps(img) {
+  if (!img || !S.cam || settings.calMode !== 'quick') return;
+  const W = img.width, H = img.height, [farP, nearP, topP] = S.quickPts.map(([x, y]) => [x * W, y * H]);
+  S.align = {
+    pts: S.quickPts.map((p) => p.slice()),
+    near: patchAround(img, nearP[0], nearP[1] - 0.18 * H, nearP[1] + 0.02 * H, 0.04 * W),
+    far: patchAround(img, farP[0], topP[1] - 0.03 * H, farP[1] + 0.02 * H, 0.05 * W),
+    W, H,
+  };
+}
+async function realign() {
+  // runs even while things move (the bowler is nearly always moving): a shift is only
+  // accepted when both ends of the pitch agree and match clearly
+  if (!S.cam || !S.source || S.source.kind === 'demo' || S.calibrating || settings.calMode !== 'quick' || S.drag >= 0) return;
+  const img = await grabFrame();
+  if (!img) return;
+  if (!S.align || S.align.W !== img.width) { rememberStumps(img); return; }
+  const A = S.align, R = Math.round(0.05 * img.width);
+  const n = findShift(img, A.near, R), f = findShift(img, A.far, R);
+  // both ends must move together (someone walking past moves only one), and clearly match
+  if (Math.hypot(n.dx - f.dx, n.dy - f.dy) > 6 || n.gain > 0.85 || f.gain > 0.85) return;
+  const W = A.W, H = A.H;
+  const next = [[A.pts[0][0] + f.dx / W, A.pts[0][1] + f.dy / H], [A.pts[1][0] + n.dx / W, A.pts[1][1] + n.dy / H], [A.pts[2][0] + f.dx / W, A.pts[2][1] + f.dy / H]];
+  const moved = Math.max(...next.map((p, i) => Math.hypot((p[0] - S.quickPts[i][0]) * W, (p[1] - S.quickPts[i][1]) * H)));
+  if (moved < 1) return;
+  S.quickPts = next;
+  recalibrate(); S.realignedAt = performance.now(); updatePill();
+}
+setInterval(() => { realign().catch(() => {}); }, 900);
+
 // ---------------------------------------------------------------- the batter's end, at full resolution
 // The detector needs a sharp picture of the ball near the batter; the working frame
 // is scaled down, so crops come straight from the video.
@@ -570,7 +718,7 @@ function captureBatterEnd(t) {
   crops.capture(video, batterRect(), t);
 }
 /** After a delivery: follow the ball into the batter with the detector, for the "reached bat" moment. */
-async function refineWithDetector(ball, sess) {
+async function refineWithDetector(ball) {
   const last = ball.obs[ball.obs.length - 1], start = { t: last[0], u: last[1], v: last[2] };
   const frames = await crops.between(start.t - 0.02, start.t + 0.7);
   if (!frames.length) { ball.arriveBy = 'motion'; return; }
@@ -578,7 +726,10 @@ async function refineWithDetector(ball, sess) {
   const toView = (r, x, y) => ({ u: (r.x + x * r.w / 640) / s, v: (r.y + y * r.h / 640) / s });
   S.status = 'Finding where the ball met the bat\u2026'; updatePill();
   try {
-    const pts = await followToBatter(frames, start, toView);
+    // only a ball near the batter's end of this pitch counts
+    const cam = makeCam(ball.cam.f, ball.cam.cx, ball.cam.cy, ball.cam.R, ball.cam.t);
+    const near = pitchRegion(cam, -1.5, Math.min(ball.L * 0.6, 12), { halfWidth: 1.8, top: 2.6 });
+    const pts = await followToBatter(frames, start, toView, null, near);
     if (pts.length) {
       ball.obs.push(...pts.map((p) => [+p.t.toFixed(4), Math.round(p.u), Math.round(p.v)]));
       ball.marks.arrive = pts[pts.length - 1].t;
@@ -588,8 +739,6 @@ async function refineWithDetector(ball, sess) {
   } catch (e) {
     ball.arriveBy = 'motion';     // the detector could not load (offline, or an old browser)
   }
-  S.status = 'Ready \u2014 waiting for the next ball';
-  saveSession(sess); renderResult(); renderSession(); updatePill();
 }
 
 // ---------------------------------------------------------------- sessions
@@ -623,6 +772,10 @@ async function endSession(showSummary) {
   if (!sess) return;
   S.session = null;
   await new Promise((r) => setTimeout(r, 300));       // let the last clip finish saving
+  // a ball still being checked belongs to this session
+  if (S.pending) { S.status = 'Checking the last ball\u2026'; updatePill(); }
+  for (let k = 0; k < 600 && S.pending; k++) await new Promise((r) => setTimeout(r, 100));
+  if (!S.session) S.status = '';
   sess.endedAt = Date.now();
   if (!sess.balls.length) {
     S.sessions = S.sessions.filter((x) => x !== sess);
@@ -838,7 +991,8 @@ function syncControls() {
   $('camHRow').hidden = !quick();
   $('camH').value = settings.camH;
   $('pitchLen').value = [20.12, 21.95].includes(settings.L) ? String(settings.L) : 'custom';
-  $('calHelp').textContent = quick()
+  $('autoRow').hidden = !quick();
+  $('calHelp').textContent = S.calHint && S.calibrating ? S.calHint : quick()
     ? 'Drag the markers onto the bottom and the top of the batter\u2019s stumps, and the bottom of your stumps. If the batter hides their stumps, move the phone a little to one side. Then enter the phone\u2019s height from the ground.'
     : 'Drag the four corners onto the corners of the pitch: the stump line at each end, at the edges of the pitch.';
   $('sCal').value = settings.calMode;
@@ -857,7 +1011,9 @@ $('calModeSeg').addEventListener('click', (e) => {
   settings.calMode = m; detector.reset(); tracker.reset(); recalibrate(); save(); syncControls(); refresh();
 });
 $('fileIn').addEventListener('change', (e) => { const f = e.target.files[0]; if (f) setSource('file', f); e.target.value = ''; });
-$('calBtn').addEventListener('click', () => { S.calibrating = !S.calibrating; detector.reset(); tracker.reset(); if (!S.calibrating) save(); syncControls(); refresh(); });
+$('autoCal').addEventListener('click', () => autoCalibrate(true));
+$('tapCal').addEventListener('click', () => { S.tapStep = 'near'; S.taps = {}; S.calibrating = true; syncControls(); showCalHint('Tap your stump (the one in front of the camera).'); refresh(); });
+$('calBtn').addEventListener('click', () => { S.calibrating = !S.calibrating; S.calHint = null; S.tapStep = null; detector.reset(); tracker.reset(); if (!S.calibrating) save(); syncControls(); refresh(); });
 $('sessBtn').addEventListener('click', () => { if (S.session) endSession(true); else startSession(); });
 $('pitchLen').addEventListener('change', () => {
   const v = $('pitchLen').value;
