@@ -93,14 +93,15 @@ export class CropRing {
  * detector on the saved crops. `toView(rect, x, y)` maps crop pixels to working-frame
  * pixels. Returns the extra points [{ t, u, v, score }] in time order.
  */
-export async function followToBatter(frames, start, toView, onProgress) {
+export async function followToBatter(frames, start, toView, onProgress, allowed = () => true) {
   const pts = [];
   let last = start, vel = null, firstSpeed = null;
   for (let i = 0; i < frames.length; i++) {
     const f = frames[i];
     if (f.t <= last.t + 1e-4) continue;
     const bmp = await createImageBitmap(f.b);
-    const hits = (await detectBalls(bmp)).map((h) => ({ ...toView(f.rect, h.x, h.y), score: h.score }));
+    // balls in the next net, or lying about, are not ours
+    const hits = (await detectBalls(bmp)).map((h) => ({ ...toView(f.rect, h.x, h.y), score: h.score })).filter((h) => allowed(h.u, h.v));
     if (bmp.close) bmp.close();
     if (onProgress) onProgress(i / frames.length);
     const dt = f.t - last.t;
