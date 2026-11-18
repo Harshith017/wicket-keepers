@@ -147,7 +147,7 @@ export function measureDelivery(obs, cam, L, hand) {
  * above), with enough of the path after it. -1 if there is none. Paths can have other
  * moving things joined on in front, so this need not be the first point.
  */
-export function deliveryStart(obs, cam, L, minSize = 0) {
+export function deliveryStart(obs, cam, L, minSize = 0, loose = false) {
   if (!cam) return -1;
   const W = 2 * cam.cx;
   const hand = [[0, 2.0], [0, 2.5], [0.8, 2.2], [-0.8, 2.2]].map(([x, z]) => project(cam, [x, L - RELEASE_AHEAD, z]));
@@ -173,6 +173,13 @@ export function deliveryStart(obs, cam, L, minSize = 0) {
     const moving = !minSize || (span > 0
       && Math.hypot(obs[i + 3].u - obs[i].u, obs[i + 3].v - obs[i].v) / span >= Math.min(minRate, 0.04 * W / 0.05)
       && [0, 1, 2].every((k) => step(i + k) >= 1.5) && sameWay(i) && sameWay(i + 1));
+    if (loose) {
+      // a ball detector will confirm it is a ball: only a coarse look at where and how it moves
+      const bigEnough = !minSize || obs[i].n == null || obs.slice(i, i + 3).every((o) => o.n == null || o.n >= 0.5 * minSize);
+      const steady = [0, 1, 2].every((k) => step(i + k) >= 1) && sameWay(i) && sameWay(i + 1);
+      if (d < 0.45 * W && bigEnough && steady) return i;
+      continue;
+    }
     if (d < (minSize ? 0.3 : 0.22) * W && big && moving) return i;
   }
   return -1;

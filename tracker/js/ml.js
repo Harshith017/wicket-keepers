@@ -104,6 +104,12 @@ export class CropRing {
       while (f.length && f[0].t < cut) f.shift();
     }, 'image/jpeg', 0.9);
   }
+  /** The frame kept nearest to time t, within `tol` seconds, or null. */
+  at(t, tol = 0.006) {
+    let best = null;
+    for (const f of this.frames) if (Math.abs(f.t - t) <= tol && (!best || Math.abs(f.t - t) < Math.abs(best.t - t))) best = f;
+    return best;
+  }
   async between(t0, t1) {
     for (let k = 0; k < 40 && this.busy > 0; k++) await new Promise((r) => setTimeout(r, 25));
     return this.frames.filter((f) => f.t >= t0 && f.t <= t1);
@@ -190,4 +196,36 @@ export async function followToBatter(frames, start, toView, onProgress, allowed 
     pts.push({ ...last, score: best.score });
   }
   return finish(frames.length, null);
+}
+
+/**
+ * Is this tracked path a ball? Up to `n` points along it are looked at in the sharp crops kept
+ * of the ball's flight (`ring`, a CropRing): a small window around each point goes through the
+ * ball detector, and a point counts when it finds a ball close to where the tracker put it.
+ * `toCrop(rect, u, v)` maps working-frame pixels to the crop's 640 pixels.
+ * Returns { checked, hits }: how many points could be looked at, and how many showed a ball.
+ */
+export async function confirmBall(path, ring, toCrop, n = 5) {
+  const WIN = 240, R = 26;
+  const pts = path.length > 6 ? path.slice(1) : path;
+  const pick = pts.length <= n ? pts : Array.from({ length: n }, (_, j) => pts[Math.round(j * (pts.length - 1) / (n - 1))]);
+  const win = document.createElement('canvas');
+  win.width = win.height = WIN;
+  const wctx2 = win.getContext('2d');
+  let checked = 0, hits = 0;
+  for (const p of pick) {
+    const f = ring.at(p.t);
+    if (!f) continue;
+    const c = toCrop(f.rect, p.u, p.v);
+    if (c.x < 0 || c.y < 0 || c.x >= SIZE || c.y >= SIZE) continue;
+    const bmp = await createImageBitmap(f.b);
+    const x0 = Math.min(SIZE - WIN, Math.max(0, Math.round(c.x - WIN / 2))), y0 = Math.min(SIZE - WIN, Math.max(0, Math.round(c.y - WIN / 2)));
+    wctx2.drawImage(bmp, x0, y0, WIN, WIN, 0, 0, WIN, WIN);
+    if (bmp.close) bmp.close();
+    checked++;
+    const k = WIN / SIZE;      // detectBalls answers in 640 pixels of whatever it was given
+    const found = (await detectBalls(win)).some((h) => h.score >= 0.5 && Math.hypot(h.x * k + x0 - c.x, h.y * k + y0 - c.y) < R);
+    if (found) hits++;
+  }
+  return { checked, hits };
 }
