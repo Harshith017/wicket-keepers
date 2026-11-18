@@ -177,6 +177,24 @@ export function deliveryStart(obs, cam, L, minSize = 0) {
   }
   return -1;
 }
+/**
+ * A delivery's path ends at the batter. The tracker can keep following the ball after that, when
+ * the batter hits it back down the pitch; judged by where it ends, such a path never went down the
+ * pitch. This cuts the path at its closest point to the batter's end when it then comes back
+ * a good way toward the camera; otherwise it returns the path unchanged.
+ */
+export function trimAtBatter(obs, cam) {
+  if (!cam || obs.length < 8) return obs;
+  const W = 2 * cam.cx, q = project(cam, [0, CONTACT_AHEAD, 0.4]);
+  let k = 0, best = Infinity;
+  for (let i = 0; i < obs.length; i++) {
+    const d = Math.hypot(obs[i].u - q[0], obs[i].v - q[1]);
+    if (d < best) { best = d; k = i; }
+  }
+  if (k < 5 || k >= obs.length - 2) return obs;
+  const back = Math.max(...obs.slice(k + 1).map((o) => Math.hypot(o.u - q[0], o.v - q[1])));
+  return back - best > 0.15 * W ? obs.slice(0, k + 1) : obs;
+}
 const median = (a) => { const b = a.filter((x) => x != null).sort((x, y) => x - y); return b.length ? b[b.length >> 1] : 0; };
 export const looksLikeDelivery = (obs, cam, L) => deliveryStart(obs, cam, L) === 0;
 
