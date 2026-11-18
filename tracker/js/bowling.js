@@ -59,6 +59,24 @@ export function imageBounce(obs) {
   return { t: obs[iMax].t, u: obs[iMax].u, v: obs[iMax].v };
 }
 
+/**
+ * How much one frame of timing moves the speed reading, in km/h, for a ball at `kmh`
+ * over the usual release-to-bat distance on a pitch of length L, at `fps` real-time frames
+ * a second. Speed is distance over time, so a time error dt changes it by about v^2 dt / D.
+ */
+export function kmhPerFrame(fps, L = 20.12, kmh = 130) {
+  const v = kmh / 3.6, D = L - RELEASE_AHEAD - CONTACT_AHEAD;
+  return (v * v / D) / fps * 3.6;
+}
+
+/** A plain-words note on what the frame rate means for speed readings. */
+export function frameRateNote(fps, L = 20.12) {
+  if (!(fps > 0)) return '';
+  const step = kmhPerFrame(fps, L);
+  const r = `At ${Math.round(fps)} fps one frame is about ${step < 2 ? step.toFixed(1) : Math.round(step)} km/h on a 130 km/h ball.`;
+  return fps < 100 ? `${r} For the most accurate speeds, record the session in slow motion (240 fps) and open the clip with Video clip.` : r;
+}
+
 /** Distance the ball travels from release to bat, unless a known ball has set it. */
 export const flightDistance = (L, known) => (known > 3 ? known : L - RELEASE_AHEAD - CONTACT_AHEAD);
 /** Release speed (m/s) from the flight time; `known` is a distance set from a ball of known speed. */

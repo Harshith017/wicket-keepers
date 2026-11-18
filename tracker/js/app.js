@@ -2,7 +2,7 @@ import { calibrate, calibrateFromTaps, project, makeCam, groundPoint } from './g
 import { MapView } from './maps.js';
 import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack, CREASE, STUMP_H } from './physics.js';
 import { FrameRing, Player } from './clips.js';
-import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance } from './bowling.js';
+import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote } from './bowling.js';
 import { CropRing, followToBatter, loadDetector } from './ml.js';
 import { findStumps, findNearStump, findFarStumps } from './stumps.js';
 import { putSession, allSessions, putClip, getClip, deleteSession } from './store.js';
@@ -107,11 +107,22 @@ class VideoSource {
   async playFromStart() {
     video.onended = () => { video.onended = null; onClipEnd(); };
     video.currentTime = 0;
+    this.frameSteps = []; this.lastMediaTime = null; this.clipFps = null;
     await video.play();
     video.playbackRate = window.__clipRate || 0.25;
     if (!this.running) this.start(this.onFrame);
   }
   get paused() { return this.kind === 'file' && video.paused; }
+  /** The clip's own frame rate, from the steps between the frames it shows (a skipped frame does not count). */
+  noteFrame(mt) {
+    if (this.lastMediaTime != null) { const d = mt - this.lastMediaTime; if (d > 0 && d < 0.5) this.frameSteps.push(d); }
+    this.lastMediaTime = mt;
+    if (this.frameSteps.length === 30) {
+      const s = this.frameSteps.slice().sort((a, b) => a - b);
+      this.clipFps = 1 / s[s.length >> 1];
+      showClipRate(this);
+    }
+  }
   start(onFrame) {
     this.running = true; this.onFrame = onFrame;
     if (this.kind === 'file' && video.paused) setTimeout(() => onFrame(video.currentTime), 0);   // show the first frame
@@ -119,7 +130,10 @@ class VideoSource {
     const tick = (now, meta) => {
       if (!this.running) return;
       let t;
-      if (this.kind === 'file') t = (meta ? meta.mediaTime : video.currentTime) / Math.max(1, settings.slowmo);
+      if (this.kind === 'file') {
+        t = (meta ? meta.mediaTime : video.currentTime) / Math.max(1, settings.slowmo);
+        if (meta && this.frameSteps) this.noteFrame(meta.mediaTime);
+      }
       else t = meta ? (meta.captureTime !== undefined ? meta.captureTime / 1000 : meta.mediaTime) : now / 1000;
       onFrame(t);
       if (useRvfc) video.requestVideoFrameCallback(tick); else requestAnimationFrame(tick);
@@ -212,8 +226,17 @@ function recalibrate() {
   if (src.kind === 'camera' && src.camFps) {
     info += src.camFps >= 55 ? ` \u00b7 Camera running at ${src.camFps} fps.`
       : ` \u00b7 This browser only gave ${src.camFps} fps, so fast balls will read less accurately.`;
+    info += ' ' + frameRateNote(src.camFps, settings.L);
   }
   $('calInfo').textContent = info;
+}
+
+/** Under the picture: the clip's frame rate, in real time, and what it means for speed. */
+function showClipRate(src) {
+  const slow = Math.max(1, settings.slowmo), real = src.clipFps * slow;
+  const what = slow > 1 ? `Clip ${Math.round(src.clipFps)} fps, slowed ${slow}\u00d7: ${Math.round(real)} fps in real time.` : `Clip ${Math.round(real)} fps.`;
+  const base = ($('calInfo').textContent || '').split(' \u00b7 Clip ')[0];
+  $('calInfo').textContent = `${base} \u00b7 ${what} ${frameRateNote(real, settings.L)}`;
 }
 
 function canvasPos(e) {
@@ -876,7 +899,11 @@ function onClipEnd() {
   S.status = 'Clip finished';
   const had = S.session && S.session.balls.length;
   endSession(true).then(() => {
-    if (!had) { $('calInfo').textContent = 'Clip finished. No delivery was picked up; check the calibration markers and try again.'; }
+    if (!had) {
+      const src = S.source, maybeSlowmo = src && src.clipFps && src.clipFps < 35 && settings.slowmo <= 1;
+      $('calInfo').textContent = 'Clip finished. No delivery was picked up; check the calibration markers and try again.'
+        + (maybeSlowmo ? ' If this is an iPhone slo-mo clip, set its slow-motion factor in Setup (240 fps shown at 30 = 8): unslowed, the ball looks too slow to be bowled.' : '');
+    }
   });
   updatePill();
 }
