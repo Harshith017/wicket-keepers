@@ -172,7 +172,19 @@ async function setSource(kind, file) {
     recalibrate();
     src.start(onFrame);
     if (kind === 'file') S.status = 'Clip loaded \u2014 finding the stumps\u2026';
-    if (kind !== 'demo') setTimeout(async () => { if (S.calibrating) return; const ok = await autoCalibrate(false); S.status = ok ? (kind === 'file' ? 'Stumps found \u2014 tap Start session' : 'Stumps found \u2014 ready') : 'Couldn\u2019t find the stumps \u2014 tap Calibrate pitch'; updatePill(); }, kind === 'file' ? 300 : 1200);
+    if (kind !== 'demo') setTimeout(async () => {
+      if (S.calibrating) return;
+      const ok = await autoCalibrate(false);
+      if (ok) {
+        // The finder can take a strip of net or the next net's stumps for yours, and every ball is
+        // then measured against the wrong pitch: open the marker check so the guess is looked at
+        // before a session starts (Start session waits until Done).
+        await startCalibration();
+        showCalHint('Stumps found. Check each yellow marker is on the stumps (Next moves through them; drag one if it is off), then tap Done.');
+        S.status = 'Check the markers, then tap Done';
+      } else S.status = 'Couldn\u2019t find the stumps \u2014 tap Calibrate pitch';
+      updatePill();
+    }, kind === 'file' ? 300 : 1200);
     if (navigator.wakeLock && !wakeLock) navigator.wakeLock.request('screen').then((l) => { wakeLock = l; l.addEventListener('release', () => { wakeLock = null; }); }).catch(() => {});
   } catch (err) {
     document.querySelectorAll('#srcSeg button').forEach((b) => b.classList.remove('on'));
