@@ -4,6 +4,8 @@ import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack,
 import { FrameRing, Player } from './clips.js';
 import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote, CONTACT_AHEAD } from './bowling.js';
 import { decodeClipAudio, soundContact } from './sound.js';
+import { yoloLabel } from './detections.js';
+import { makeZip } from './zip.js';
 import { CropRing, followToBatter, loadDetector } from './ml.js';
 import { findStumps, findNearStump, findFarStumps } from './stumps.js';
 import { putSession, allSessions, putClip, getClip, deleteSession } from './store.js';
@@ -18,7 +20,7 @@ const MAX_VIEW = 1280;           // frames are worked on at up to this many pixe
 
 // ---------------------------------------------------------------- state
 const saved = (() => { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) { return {}; } })();
-const settings = Object.assign({ L: 20.12, rectW: 3.05, units: 'kmh', sens: 45, procW: 960, slowmo: 1, calMode: 'quick', camH: 150, sound: 'off' }, saved.settings);
+const settings = Object.assign({ L: 20.12, rectW: 3.05, units: 'kmh', sens: 45, procW: 960, slowmo: 1, calMode: 'quick', camH: 150, sound: 'off', collect: 'off' }, saved.settings);
 if (settings.calMode === 'stumps') settings.calMode = 'quick';      // the old stump mode became the quick setup
 const F = {                                   // field state, shared by both field views
   L: settings.L, boundary: saved.boundary || 65, hand: saved.hand || 'R',
@@ -852,6 +854,56 @@ async function refineBySound(ball) {
     applyMarks(ball);
   } catch (e) { ball.soundNote = 'sound could not be read'; }
 }
+// ---------------------------------------------------------------- training frames
+// For training a cricket-ball detector (MODEL.md): the sharp crops of the batter's end the
+// detector looks at, with the ball marked where the tracker placed it. The marks are a head
+// start for labelling, not the truth: every frame needs checking by eye.
+const MAX_TRAINING = 600, BALL_DIAMETER = 0.072;
+S.training = [];
+function collectTraining(ball, frames, start, pts, cam, s) {
+  const known = [start, ...pts];
+  const tEnd = (pts.contact != null ? pts.contact : known[known.length - 1].t) + 0.1;
+  const P = [0, CONTACT_AHEAD, 0.6], dist = Math.hypot(cam.C[0] - P[0], cam.C[1] - P[1], cam.C[2] - P[2]);
+  const ballView = cam.f * BALL_DIAMETER / dist;           // the ball's size near the batter, in working-frame pixels
+  for (const f of frames) {
+    if (f.t > tEnd || S.training.length >= MAX_TRAINING) break;
+    const r = f.rect, sc = 640 / r.w, p = known.find((q) => Math.abs(q.t - f.t) < 0.002);
+    let label = '';
+    if (p) {
+      const x = (p.u * s - r.x) * sc, y = (p.v * s - r.y) * sc;
+      if (x >= 0 && x < 640 && y >= 0 && y < 640) label = yoloLabel(x, y, Math.max(6, ballView * s * sc), 640);
+    }
+    S.training.push({ b: f.b, label, name: `${ball.at}-${String(Math.round(f.t * 1000)).padStart(7, '0')}` });
+  }
+  updateTrainingButton();
+}
+function updateTrainingButton() {
+  const b = $('exportTrain');
+  if (!b) return;
+  b.disabled = !S.training.length;
+  b.textContent = `Export (${S.training.length})`;
+}
+async function exportTraining() {
+  if (!S.training.length) return;
+  const enc = new TextEncoder(), files = [];
+  for (const t of S.training) {
+    files.push({ name: `images/train/${t.name}.jpg`, data: new Uint8Array(await t.b.arrayBuffer()) });
+    files.push({ name: `labels/train/${t.name}.txt`, data: enc.encode(t.label ? t.label + '\n' : '') });
+  }
+  files.push({ name: 'data.yaml', data: enc.encode("train: images/train\nval: images/train\nnc: 1\nnames: ['ball']\n") });
+  files.push({ name: 'README.txt', data: enc.encode(
+    'Wicket Keepers ball tracker: training frames for a cricket-ball detector.\n\n'
+    + 'Each image is a 640x640 crop of the batter\'s end, as the detector sees it. Labels are YOLO format\n'
+    + '(class 0 = ball) and come from where the tracker placed the ball: check every frame. An empty\n'
+    + 'label file means the tracker did not place the ball there; the ball may still be in the picture.\n'
+    + 'See tracker/MODEL.md in the repository for labelling and training.\n') });
+  const blob = new Blob([makeZip(files)], { type: 'application/zip' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = `ball-frames-${new Date().toISOString().slice(0, 10)}.zip`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+
 /** Follow the ball into the batter with the detector, for the "reached bat" moment. */
 async function refineByPicture(ball) {
   const last = ball.obs[ball.obs.length - 1], start = { t: last[0], u: last[1], v: last[2] };
@@ -865,6 +917,7 @@ async function refineByPicture(ball) {
     const cam = makeCam(ball.cam.f, ball.cam.cx, ball.cam.cy, ball.cam.R, ball.cam.t);
     const near = pitchRegion(cam, -1.5, Math.min(ball.L * 0.6, 12), { halfWidth: 1.8, top: 2.6 });
     const pts = await followToBatter(frames, start, toView, null, near);
+    if (settings.collect === 'on') collectTraining(ball, frames, start, pts, cam, s);
     if (pts.length) {
       ball.obs.push(...pts.map((p) => [+p.t.toFixed(4), Math.round(p.u), Math.round(p.v)]));
       ball.marks.arrive = pts.contact != null ? pts.contact : pts[pts.length - 1].t;   // between frames when it could be worked out
@@ -1225,6 +1278,9 @@ bind('sSens', 'sens', (v) => Math.min(150, Math.max(15, +v)));
 bind('sProc', 'procW', (v) => +v);
 bind('sSlow', 'slowmo', (v) => Math.min(32, Math.max(1, +v)));
 bind('sSound', 'sound', String);
+bind('sCollect', 'collect', String, updateTrainingButton);
+$('exportTrain').addEventListener('click', () => { exportTraining().catch(() => {}); });
+updateTrainingButton();
 
 window.addEventListener('resize', () => { big.draw(); mini.draw(); renderMaps(); });
 document.addEventListener('visibilitychange', () => {

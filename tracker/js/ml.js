@@ -1,5 +1,6 @@
-// Finds the ball near the batter with a small trained detector (YOLO11n, the
-// COCO "sports ball" class) running in the browser on ONNX Runtime.
+// Finds the ball near the batter with a small trained detector running in the browser on
+// ONNX Runtime. By default that is YOLO11n and its COCO "sports ball" class; a model trained
+// on cricket balls can be swapped in with vendor/ball-model.json (see MODEL.md).
 //
 // Motion detection follows the ball well from the bowler's hand down the pitch,
 // but loses it against the batter's whites. The detector picks it up there, which
@@ -9,9 +10,14 @@
 // seconds; after each delivery the detector runs over the frames around the batter.
 
 import { contactTime } from './bowling.js';
+import { modelConfig, parseYolo, parseDetr, detrOutputs } from './detections.js';
 
-const BALL = 32, SIZE = 640, MIN_SCORE = 0.25;
-let loading = null;
+const SIZE = 640;            // the crops kept around the batter's end
+let loading = null, config = modelConfig(null);
+const IMAGENET_MEAN = [0.485, 0.456, 0.406], IMAGENET_STD = [0.229, 0.224, 0.225];
+
+/** The model in use: { file, format, size, classIndex, normalize, minScore, name? }. */
+export const detectorInfo = () => config;
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -30,7 +36,13 @@ export function loadDetector() {
       const ort = window.ort;
       ort.env.wasm.wasmPaths = base;
       ort.env.wasm.numThreads = self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
-      return ort.InferenceSession.create(base + 'yolo11n.onnx', { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+      // a cricket-ball model, if one has been added, else the default
+      try {
+        const r = await fetch(base + 'ball-model.json', { cache: 'no-cache' });
+        if (r.ok) config = modelConfig(await r.json());
+      } catch (e) { /* no file: the default model */ }
+      work.width = work.height = config.size;
+      return ort.InferenceSession.create(base + config.file, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
     })().catch((e) => { loading = null; throw e; });
   }
   return loading;
@@ -40,23 +52,31 @@ const work = document.createElement('canvas');
 work.width = work.height = SIZE;
 const wctx = work.getContext('2d', { willReadFrequently: true });
 
-/** Ball detections in a 640x640 image source: [{ x, y, score }] in that image's pixels. */
+/** Ball detections in a 640x640 image source: [{ x, y, w, score }] in that image's pixels. */
 export async function detectBalls(img) {
-  const session = await loadDetector(), ort = window.ort;
-  wctx.drawImage(img, 0, 0, SIZE, SIZE);
-  const px = wctx.getImageData(0, 0, SIZE, SIZE).data, n = SIZE * SIZE, inp = new Float32Array(3 * n);
-  for (let i = 0, j = 0; i < n; i++, j += 4) { inp[i] = px[j] / 255; inp[n + i] = px[j + 1] / 255; inp[2 * n + i] = px[j + 2] / 255; }
-  const out = await session.run({ [session.inputNames[0]]: new ort.Tensor('float32', inp, [1, 3, SIZE, SIZE]) });
-  const t = out[session.outputNames[0]], N = t.dims[2], d = t.data, hits = [];
-  for (let k = 0; k < N; k++) {
-    const s = d[(4 + BALL) * N + k];
-    if (s >= MIN_SCORE) hits.push({ x: d[k], y: d[N + k], score: s });
+  const session = await loadDetector(), ort = window.ort, M = config.size;
+  wctx.drawImage(img, 0, 0, M, M);
+  const px = wctx.getImageData(0, 0, M, M).data, n = M * M, inp = new Float32Array(3 * n);
+  const net = config.normalize === 'imagenet';
+  for (let i = 0, j = 0; i < n; i++, j += 4) {
+    for (let c = 0; c < 3; c++) {
+      const v = px[j + c] / 255;
+      inp[c * n + i] = net ? (v - IMAGENET_MEAN[c]) / IMAGENET_STD[c] : v;
+    }
   }
-  // keep the best of overlapping boxes
-  hits.sort((a, b) => b.score - a.score);
-  const kept = [];
-  for (const h of hits) if (kept.every((k) => Math.hypot(k.x - h.x, k.y - h.y) > 12)) kept.push(h);
-  return kept;
+  const out = await session.run({ [session.inputNames[0]]: new ort.Tensor('float32', inp, [1, 3, M, M]) });
+  let hits;
+  if (config.format === 'detr') {
+    const o = detrOutputs(out);
+    if (!o) throw new Error('model outputs are not boxes and class scores');
+    hits = parseDetr(o.boxes.data, o.boxes.dims, o.logits.data, o.logits.dims, config.classIndex, config.minScore, M);
+  } else {
+    const t = out[session.outputNames[0]];
+    hits = parseYolo(t.data, t.dims, config.classIndex, config.minScore);
+  }
+  // back to the 640 crop's pixels
+  const k = SIZE / M;
+  return hits.map((h) => ({ x: h.x * k, y: h.y * k, w: h.w * k, score: h.score }));
 }
 
 /**
