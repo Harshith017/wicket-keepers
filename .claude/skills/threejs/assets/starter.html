@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>three.js starter</title>
+  <style>
+    :root { --bg: #f4f3ef; --ink: #161616; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #111214; --ink: #ececec; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+    main { max-width: 1100px; margin: 0 auto; padding: 32px 16px; }
+    /* The 3D box: explicit aspect so the page never shifts when the canvas arrives. */
+    .viewer { position: relative; aspect-ratio: 16 / 10; width: 100%; border-radius: 12px; overflow: hidden; }
+    .viewer canvas { display: block; width: 100%; height: 100%; touch-action: pan-y; }
+    .viewer .poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .viewer.is-live .poster { display: none; }
+    .viewer .progress { position: absolute; left: 16px; bottom: 16px; font-size: 14px; opacity: .7; }
+    .viewer.is-live .progress { display: none; }
+  </style>
+  <!-- One exact version for core and addons. -->
+  <script type="importmap">
+  { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+  } }
+  </script>
+</head>
+<body>
+<main>
+  <h1>three.js starter</h1>
+  <!-- data-model: optional .glb path. Without it a placeholder shape is shown.
+       The poster is the fallback when WebGL is unavailable: replace with a screenshot of the scene. -->
+  <div class="viewer" id="viewer" data-model="">
+    <img class="poster" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 10'%3E%3Crect width='16' height='10' fill='%23d9d7d0'/%3E%3C/svg%3E">
+    <span class="progress" aria-live="polite"></span>
+  </div>
+</main>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+function mountViewer(box) {
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // 1. Renderer, or the poster stays.
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  } catch (err) {
+    console.warn('WebGL unavailable, showing poster', err);
+    return () => {};
+  }
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.toneMapping = THREE.NeutralToneMapping;
+  const canvas = renderer.domElement;
+  canvas.setAttribute('role', 'img');
+  canvas.setAttribute('aria-label', box.dataset.label || '3D view of the product');
+  box.prepend(canvas);
+
+  // 2. Scene, camera, light.
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
+  camera.position.set(3, 1.6, 4.2);
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  pmrem.dispose();
+  const sun = new THREE.DirectionalLight(0xffffff, 1.2);
+  sun.position.set(3, 5, 2);
+  scene.add(sun);
+
+  const controls = new OrbitControls(camera, canvas);
+  controls.enableDamping = true;
+  controls.enableZoom = false;          // keep page scroll working
+  controls.enablePan = false;
+  controls.autoRotate = !reduced;
+  controls.autoRotateSpeed = 0.8;
+
+  // 3. Content: a model when given, else a placeholder.
+  const root = new THREE.Group();
+  scene.add(root);
+  const progress = box.querySelector('.progress');
+  const url = box.dataset.model;
+  if (url) {
+    const manager = new THREE.LoadingManager();
+    manager.onProgress = (_u, l, t) => { progress.textContent = `Loading ${Math.round((l / t) * 100)}%`; };
+    new GLTFLoader(manager).loadAsync(url).then((gltf) => {
+      root.add(gltf.scene);
+      frame(root);
+      requestRender();
+    }).catch((e) => { console.error('model failed', e); progress.textContent = ''; });
+  } else {
+    const mesh = new THREE.Mesh(
+      new THREE.TorusKnotGeometry(0.8, 0.28, 220, 32),
+      new THREE.MeshPhysicalMaterial({ color: 0x3d6df2, roughness: 0.25, metalness: 0.1, clearcoat: 1 })
+    );
+    root.add(mesh);
+    frame(root);
+  }
+
+  function frame(object, margin = 1.3) {
+    const box3 = new THREE.Box3().setFromObject(object);
+    const size = box3.getSize(new THREE.Vector3());
+    object.position.sub(box3.getCenter(new THREE.Vector3()));
+    const radius = size.length() / 2;
+    const dist = (radius * margin) / Math.sin(THREE.MathUtils.degToRad(camera.fov) / 2);
+    camera.position.setLength(dist);
+    camera.near = dist / 100; camera.far = dist * 100;
+    camera.updateProjectionMatrix();
+    controls.target.set(0, 0, 0);
+    controls.update();
+  }
+
+  // 4. Size from the container.
+  const ro = new ResizeObserver(([entry]) => {
+    const { width, height } = entry.contentRect;
+    if (!width || !height) return;
+    renderer.setSize(width, height, false);
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    requestRender();
+  });
+  ro.observe(box);
+
+  // 5. Loop: continuous while animating and visible, on demand otherwise.
+  const timer = new THREE.Timer();
+  let visible = true, dirty = true;
+  function requestRender() { dirty = true; }
+  controls.addEventListener('change', requestRender);
+  function tick(t) {
+    timer.update(t);
+    const moving = controls.update(timer.getDelta());   // damping / autoRotate
+    if (!visible) return;
+    if (moving || controls.autoRotate || dirty) {
+      renderer.render(scene, camera);
+      dirty = false;
+      box.classList.add('is-live');
+    }
+  }
+  renderer.setAnimationLoop(tick);
+
+  const io = new IntersectionObserver(([e]) => {
+    visible = e.isIntersecting;
+    renderer.setAnimationLoop(visible ? tick : null);
+    if (visible) requestRender();
+  });
+  io.observe(box);
+  const onVis = () => renderer.setAnimationLoop(document.hidden || !visible ? null : tick);
+  document.addEventListener('visibilitychange', onVis);
+
+  // 6. Lost context -> poster.
+  canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); box.classList.remove('is-live'); });
+  canvas.addEventListener('webglcontextrestored', () => requestRender());
+
+  // 7. Cleanup.
+  return function dispose() {
+    renderer.setAnimationLoop(null);
+    ro.disconnect(); io.disconnect();
+    document.removeEventListener('visibilitychange', onVis);
+    controls.dispose();
+    root.traverse((o) => {
+      o.geometry?.dispose();
+      const mats = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+      for (const m of mats) { for (const v of Object.values(m)) if (v?.isTexture) v.dispose(); m.dispose(); }
+    });
+    scene.environment?.dispose();
+    renderer.dispose();
+    canvas.remove();
+  };
+}
+
+window.disposeViewer = mountViewer(document.getElementById('viewer'));
+</script>
+</body>
+</html>
