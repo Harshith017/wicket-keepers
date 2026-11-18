@@ -499,22 +499,29 @@ const MIN_KMH = 30;      // slower than this is not a bowled ball
 const MIN_RELEASE_PX = 50;   // moving pixels (in a 720-wide frame) a ball covers at least just out of the hand
 function onTrack(candidates) {
   const W = S.source.width, L = settings.L, demo = S.source.kind === 'demo';
-  let best = null;
+  let best = null, why = null, whyLen = 0;
+  // the reason the longest rejected path was not a delivery (the longest is most likely the ball)
+  const reject = (path, reason) => { if (path.length > whyLen) { whyLen = path.length; why = reason; } };
   for (const path of candidates) {
     // it must start where the bowler lets go of the ball (anything joined on before that is dropped)
     const minSize = demo ? 0 : MIN_RELEASE_PX * (S.procScale || 1) ** 2;
     const i0 = deliveryStart(path, S.cam, L, minSize);
     const obs = i0 > 0 ? path.slice(i0) : path;
     // nobody bowls twice within a couple of seconds: anything that soon is the last ball moving on
-    if (obs[0].t < S.lastBallEnd + 2.5 && obs[0].t > S.lastBallEnd - 5) continue;
+    if (obs[0].t < S.lastBallEnd + 2.5 && obs[0].t > S.lastBallEnd - 5) { reject(path, 'too soon after the last ball'); continue; }
     const a = analyseTrack(obs, S.cam, { L, hand: F.hand, rmsMax: 5 * W / 1280 });
     // it must head from the bowler's end toward the batter's stumps
-    if (i0 < 0 && !(demo && a.ok)) continue;
+    if (i0 < 0 && !(demo && a.ok)) { reject(path, 'it did not start where a bowler lets go of the ball (check the markers and the camera height)'); continue; }
     // and stay on this pitch: not a ball in the next net, a throw back, or someone walking past
-    if (!demo && !deliveryCheck(obs, S.cam, L, minSize).ok) continue;
+    const dc = demo ? { ok: true } : deliveryCheck(obs, S.cam, L, minSize);
+    if (!dc.ok) { reject(path, dc.why); continue; }
     if (!best || obs.length > best.obs.length) best = { obs, a };
   }
-  if (!best) { S.status = 'Saw movement, but not a delivery'; updatePill(); return; }
+  if (!best) {
+    S.status = why ? `Saw movement, but not a delivery: ${why}` : 'Saw movement, but not a delivery';
+    console.info('[tracker] not a delivery:', why, `(${candidates.length} path(s), longest rejected ${whyLen} points)`);
+    updatePill(); return;
+  }
   const { obs, a: r } = best;
   const m = measureDelivery(obs, S.cam, L, F.hand);
   S.lastBallEnd = obs[obs.length - 1].t;
