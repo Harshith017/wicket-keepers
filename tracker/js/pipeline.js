@@ -57,12 +57,13 @@ export async function signOut() {
   await fb.auth().signOut();
 }
 
-/** A JPEG re-encoded smaller, as base64 (frames sit in the database until the weekly move). */
-async function smallJpeg(blob, quality = 0.7) {
+/** A JPEG re-encoded smaller (and, with maxSide, scaled down), as base64. */
+async function smallJpeg(blob, quality = 0.7, maxSide = 0) {
   const bmp = await createImageBitmap(blob);
+  const k = maxSide ? Math.min(1, maxSide / Math.max(bmp.width, bmp.height)) : 1;
   const c = document.createElement('canvas');
-  c.width = bmp.width; c.height = bmp.height;
-  c.getContext('2d').drawImage(bmp, 0, 0);
+  c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
   if (bmp.close) bmp.close();
   const small = await new Promise((r) => c.toBlob(r, 'image/jpeg', quality));
   const buf = new Uint8Array(await small.arrayBuffer());
@@ -97,4 +98,52 @@ export async function sendFrames(samples) {
     }
   }
   return sent;
+}
+
+/**
+ * Sends a whole session for checking: its setup (settings, markers, camera, batter's hand),
+ * what the tracker decided along the way (session.events), every ball's numbers and tracked
+ * points, and each ball's replay clip, scaled down. A document holds at most 1 MB, so the
+ * report is one document (collection sessionReports) and each clip is split over as many
+ * sessionFrames documents as it needs. `getClip(ball)` returns { w, h, times, blobs } or null.
+ * Returns { id, balls, frames }; throws 'not-signed-in' or 'not-approved' like sendFrames.
+ */
+export async function sendSession(sess, getClip, onProgress = () => {}) {
+  const fb = await loadFirebase();
+  const user = fb.auth().currentUser;
+  if (!user) throw new Error('not-signed-in');
+  const db = fb.firestore(), uid = user.uid, id = `${uid.slice(0, 8)}-${sess.id}`;
+  const stamp = fb.firestore.FieldValue.serverTimestamp();
+  const report = {
+    id: sess.id, startedAt: sess.startedAt, endedAt: sess.endedAt, hand: sess.hand, L: sess.L,
+    setup: sess.setup || null, events: sess.events || [],
+    balls: sess.balls.map((b) => { const { clip, ...rest } = b; return rest; }),
+  };
+  let json = JSON.stringify(report);
+  if (json.length > 900000) { report.events = report.events.slice(-200); json = JSON.stringify(report); }
+  const write = async (ref, data) => {
+    try { await ref.set(data); } catch (e) { if (e && e.code === 'permission-denied') throw new Error('not-approved'); throw e; }
+  };
+  await write(db.collection('sessionReports').doc(id), { uid, json, balls: sess.balls.length, createdAt: stamp });
+  let frames = 0;
+  for (let i = 0; i < sess.balls.length; i++) {
+    onProgress(i / sess.balls.length);
+    const clip = await getClip(sess.balls[i]).catch(() => null);
+    if (!clip || !clip.blobs || !clip.blobs.length) continue;
+    // every second frame, at most 360 px: enough to see what was tracked
+    let part = 0, imgs = [], times = [], size = 0;
+    const flush = async () => {
+      if (!imgs.length) return;
+      await write(db.collection('sessionFrames').doc(`${id}-${i}-${part}`), { uid, report: id, ball: i, part, times: JSON.stringify(times), imgs, createdAt: stamp });
+      frames += imgs.length; part++; imgs = []; times = []; size = 0;
+    };
+    for (let k = 0; k < clip.blobs.length; k += 2) {
+      const img = await smallJpeg(clip.blobs[k], 0.6, 360);
+      if (size + img.length > 650000 || imgs.length >= 60) await flush();
+      imgs.push(img); times.push(+clip.times[k].toFixed(4)); size += img.length;
+    }
+    await flush();
+  }
+  onProgress(1);
+  return { id, balls: sess.balls.length, frames };
 }

@@ -5,7 +5,7 @@ import { FrameRing, Player } from './clips.js';
 import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote, CONTACT_AHEAD, trimAtBatter, ballCandidateFilter } from './bowling.js';
 import { decodeClipAudio, soundContact } from './sound.js';
 import { yoloLabel, trainingFiles, pickForUpload } from './detections.js';
-import { signIn, signOut, signedInEmail, sendFrames } from './pipeline.js';
+import { signIn, signOut, signedInEmail, sendFrames, sendSession } from './pipeline.js';
 import { makeZip } from './zip.js';
 import { CropRing, followToBatter, loadDetector, confirmBall } from './ml.js';
 import { findStumps, findNearStump, findFarStumps } from './stumps.js';
@@ -514,6 +514,14 @@ function shotDirection(az) {
 const MAX_KMH = 165;     // faster than this, the automatic frames must be wrong
 const MIN_KMH = 30;      // slower than this is not a bowled ball
 const MIN_RELEASE_PX = 11;   // moving pixels (in a 720-wide frame) a ball covers at least just out of the hand: low enough for a bowler releasing a few metres from the lens (real clips: 25-45 at 960 wide)
+/** What the tracker decided, for the console and the session's own log (sent with a session for checking). */
+function note(sess, text) {
+  console.info('[tracker]', text);
+  if (!sess) return;
+  const ev = sess.events || (sess.events = []);
+  ev.push([+(S.lastT || 0).toFixed(2), text]);
+  if (ev.length > 400) ev.splice(0, ev.length - 400);
+}
 function onTrack(candidates) {
   const W = S.source.width, L = settings.L, demo = S.source.kind === 'demo';
   let best = null, why = null, whyLen = 0;
@@ -549,7 +557,7 @@ function onTrack(candidates) {
   if (!best && loose.length) { confirmLoose(loose, why); return; }
   if (!best) {
     S.status = why ? `Saw movement, but not a delivery: ${why}` : 'Saw movement, but not a delivery';
-    console.info('[tracker] not a delivery:', why, `(${candidates.length} path(s), longest rejected ${whyLen} points)`);
+    note(S.session, `not a delivery: ${why || 'no reason'} (${candidates.length} path(s), longest ${whyLen} points)`);
     updatePill(); return;
   }
   acceptDelivery(best.obs, best.a);
@@ -567,7 +575,7 @@ async function confirmLoose(loose, why) {
     loose.sort((p, q) => q.length - p.length);
     for (const obs of loose.slice(0, 3)) {
       const { checked, hits } = await confirmBall(obs, flight, toCrop);
-      console.info('[tracker] ball check:', `${hits}/${checked} frames show a ball`, `(${obs.length} points from t ${obs[0].t.toFixed(2)})`);
+      note(sess, `ball check: ${hits}/${checked} frames show a ball (${obs.length} points from t ${obs[0].t.toFixed(2)})`);
       if (checked >= 3 && hits >= 3 && sess && !(obs[0].t < S.lastBallEnd + 2.5 && obs[0].t > S.lastBallEnd - 5)) {
         acceptDelivery(obs, null, true, sess);      // the session may be ending (end of a clip): it waits for this
         return;
@@ -614,10 +622,11 @@ function acceptDelivery(obs, r, confirmed = false, sess = S.session) {
     const end = ball.obs[ball.obs.length - 1];
     const reached = reachesBatter({ u: end[1], v: end[2] }, S.cam);
     if (!(kmh >= MIN_KMH && kmh <= MAX_KMH) || !reached) {
-      console.info('[tracker] ignored:', !reached ? 'did not reach the batter' : `speed ${Math.round(kmh)} km/h out of range`, `(from t ${ball.obs[0][0]}, ${ball.obs.length} points, ends at ${end[1]},${end[2]})`);
+      note(sess, `ignored: ${!reached ? 'did not reach the batter' : `speed ${Math.round(kmh)} km/h out of range`} (from t ${ball.obs[0][0]}, ${ball.obs.length} points, ends at ${end[1]},${end[2]})`);
       S.status = !reached ? 'Ignored a path that did not reach the batter' : `Ignored: ${Math.round(kmh)} km/h is not a bowled ball`; updatePill();
       return;
     }
+    note(sess, `ball ${sess.balls.length + 1}: ${Math.round(kmh)} km/h from t ${ball.obs[0][0]} (${ball.confirmedBy === 'detector' ? 'confirmed by the ball model' : 'motion checks'}; bat contact by ${ball.arriveBy || 'motion'})`);
     addBall(sess, ball, clip);
   });
 }
@@ -711,9 +720,9 @@ function renderSession() {
   renderMaps();
   if (!B.length) {
     $('sessTiles').innerHTML = '<p class="muted" style="margin:0;grid-column:1/-1;padding:20px">No balls yet. Each delivery is added here as it is tracked.</p>';
-    $('sessTable').innerHTML = ''; $('clearBtn').disabled = !V; return;
+    $('sessTable').innerHTML = ''; $('clearBtn').disabled = !V; $('sendSessBtn').disabled = !V; return;
   }
-  $('clearBtn').disabled = false;
+  $('clearBtn').disabled = false; $('sendSessBtn').disabled = false;
   const speeds = B.filter((b) => b.speed > 0 && !b.check).map((b) => b.speed), lens = B.filter((b) => b.length != null);
   $('sessTiles').innerHTML = tile('Balls', B.length, '', B.some((b) => b.check) ? `${B.filter((b) => b.check).length} to check` : '')
     + tile('Fastest', speeds.length ? spd(Math.max(...speeds)).toFixed(0) : '\u2014', speeds.length ? unit() : '')
@@ -1059,7 +1068,10 @@ function trailOf(segments) {
 }
 function startSession() {
   if (S.session || !S.cam) return;
-  S.session = { id: newId(), startedAt: Date.now(), endedAt: null, hand: F.hand, L: settings.L, balls: [] };
+  S.session = { id: newId(), startedAt: Date.now(), endedAt: null, hand: F.hand, L: settings.L, balls: [], events: [],
+    // how it was set up, for checking a session later
+    setup: { settings: { ...settings }, quickPts: S.quickPts, calibPts: S.calibPts, camInfo: S.camInfo,
+      source: S.source ? { kind: S.source.kind, width: S.source.width, height: S.source.height, camFps: S.source.camFps || null } : null } };
   S.sessions.unshift(S.session);
   S.viewSession = S.session; S.last = null; S.status = '';
   detector.reset(); tracker.reset(); ring.reset(); crops.reset(); flight.reset(); S.lastT = -1;
@@ -1338,6 +1350,24 @@ $('pitchLen').addEventListener('change', () => {
 $('camH').addEventListener('input', () => {
   const v = +$('camH').value;
   if (v >= 50 && v <= 600) { settings.camH = v; recalibrate(); save(); updatePill(); refresh(); }
+});
+async function loadClip(b) {
+  if (!b.clip) return null;
+  try { return clipMemory.get(b.clip) || await getClip(b.clip); } catch (e) { return clipMemory.get(b.clip) || null; }
+}
+$('sendSessBtn').addEventListener('click', async () => {
+  const V = S.viewSession, el = $('sendSessInfo'), btn = $('sendSessBtn');
+  if (!V) return;
+  btn.disabled = true;
+  try {
+    if (!(await signedInEmail())) { el.textContent = 'Sign in with your Wicket Keepers Google account\u2026'; await signIn(); }
+    el.textContent = 'Sending\u2026';
+    const r = await sendSession(V, loadClip, (f) => { el.textContent = `Sending\u2026 ${Math.round(f * 100)}%`; });
+    el.textContent = `Sent: ${r.balls} ball${r.balls === 1 ? '' : 's'} and ${r.frames} clip frames. Tell Claude to check the session from ${new Date(V.startedAt).toLocaleString()}.`;
+  } catch (e) {
+    el.textContent = e.message === 'not-approved' ? 'This account is not approved in Wicket Keepers (or the Firebase rules for sessions are not added yet).'
+      : e.message === 'not-signed-in' ? 'Sign-in did not finish.' : `Could not send (${e.code || e.message || 'offline?'}).`;
+  } finally { btn.disabled = false; }
 });
 $('clearBtn').addEventListener('click', async () => {
   const V = S.viewSession;

@@ -29,3 +29,41 @@
         || (request.auth != null
             && request.auth.token.email.lower() in get(/databases/$(database)/documents/trip/admins).data.emails);
     }
+
+// Sessions sent for checking (Session tab > Send to Claude). Paste these two blocks next to the
+// ballFrames block, inside the same "match /databases/{database}/documents { ... }", and Publish.
+// Approved accounts can send (and re-send) their own sessions; anyone can read them, so Claude
+// can check them without signing in; they can be cleared after 30 days, or by an admin.
+
+    match /sessionReports/{id} {
+      allow read: if true;
+      allow create, update: if request.auth != null
+        && request.auth.token.email_verified == true
+        && exists(/databases/$(database)/documents/people/$(request.auth.token.email.lower()))
+        && request.resource.data.uid == request.auth.uid
+        && (resource == null || resource.data.uid == request.auth.uid)
+        && request.resource.data.keys().hasOnly(['uid', 'json', 'balls', 'createdAt'])
+        && request.resource.data.json is string
+        && request.resource.data.json.size() < 1000000
+        && request.resource.data.createdAt == request.time;
+      allow delete: if resource.data.createdAt < request.time - duration.value(30, 'd')
+        || (request.auth != null
+            && request.auth.token.email.lower() in get(/databases/$(database)/documents/trip/admins).data.emails);
+    }
+
+    match /sessionFrames/{id} {
+      allow read: if true;
+      allow create, update: if request.auth != null
+        && request.auth.token.email_verified == true
+        && exists(/databases/$(database)/documents/people/$(request.auth.token.email.lower()))
+        && request.resource.data.uid == request.auth.uid
+        && (resource == null || resource.data.uid == request.auth.uid)
+        && request.resource.data.keys().hasOnly(['uid', 'report', 'ball', 'part', 'times', 'imgs', 'createdAt'])
+        && request.resource.data.imgs is list
+        && request.resource.data.imgs.size() <= 60
+        && request.resource.data.times is string
+        && request.resource.data.createdAt == request.time;
+      allow delete: if resource.data.createdAt < request.time - duration.value(30, 'd')
+        || (request.auth != null
+            && request.auth.token.email.lower() in get(/databases/$(database)/documents/trip/admins).data.emails);
+    }
