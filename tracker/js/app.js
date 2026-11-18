@@ -844,21 +844,27 @@ async function realign() {
   // runs even while things move (the bowler is nearly always moving): a shift is only
   // accepted when both ends of the pitch agree and match clearly
   if (!S.cam || !S.source || S.source.kind === 'demo' || S.calibrating || settings.calMode !== 'quick' || S.drag >= 0) return;
+  // Not for recorded clips: their camera does not move while they are analysed, and on real net
+  // clips the bowler running past the near marker and the batter moving at the stumps made false
+  // 'moves' that shifted the markers mid-clip, after which no delivery fitted (a moved phone:
+  // calibrate again).
+  if (S.source.kind === 'file') return;
   const img = await grabFrame();
   if (!img) return;
   if (!S.align || S.align.W !== img.width) { rememberStumps(img); return; }
   const A = S.align, R = Math.round(0.05 * img.width);
   const n = findShift(img, A.near, R), f = findShift(img, A.far, R);
   // both ends must move together (someone walking past moves only one), and clearly match
-  if (Math.hypot(n.dx - f.dx, n.dy - f.dy) > 6 || n.gain > 0.85 || f.gain > 0.85) return;
+  if (Math.hypot(n.dx - f.dx, n.dy - f.dy) > 6 || n.gain > 0.7 || f.gain > 0.7) return;
   const W = A.W, H = A.H;
   const next = [[A.pts[0][0] + f.dx / W, A.pts[0][1] + f.dy / H], [A.pts[1][0] + n.dx / W, A.pts[1][1] + n.dy / H], [A.pts[2][0] + f.dx / W, A.pts[2][1] + f.dy / H]];
   const moved = Math.max(...next.map((p, i) => Math.hypot((p[0] - S.quickPts[i][0]) * W, (p[1] - S.quickPts[i][1]) * H)));
   // small wobbles are left alone, so the markers stay put; a real knock shows in two checks running
   if (moved < 3) { S.alignVote = null; return; }
+  // the same shift in three checks running (about 3 s): people moving past make one-off matches
   const v = S.alignVote, same = v && Math.hypot(v.dx - n.dx, v.dy - n.dy) <= 2;
-  S.alignVote = { dx: n.dx, dy: n.dy };
-  if (!same) return;
+  S.alignVote = { dx: n.dx, dy: n.dy, count: same ? v.count + 1 : 1 };
+  if (S.alignVote.count < 3) return;
   S.quickPts = next;
   recalibrate(); S.realignedAt = performance.now(); updatePill();
 }
