@@ -66,3 +66,33 @@ export function yoloLabel(cx, cy, w, size) {
   const f = (v) => Math.min(1, Math.max(0, v / size)).toFixed(6);
   return `0 ${f(cx)} ${f(cy)} ${f(w)} ${f(w)}`;
 }
+
+/**
+ * The files of a training export: samples are [{ name, bytes (JPEG), label, x, y, ball }] in
+ * time order. YOLO layout (images/train, labels/train, data.yaml) plus one table per ball,
+ * frame by frame (sequences/<ball>.csv: Frame, Visibility, X, Y, Image), for trackers that
+ * learn from consecutive frames, and a README.
+ */
+export function trainingFiles(samples) {
+  const enc = new TextEncoder(), files = [];
+  for (const t of samples) {
+    files.push({ name: `images/train/${t.name}.jpg`, data: t.bytes });
+    files.push({ name: `labels/train/${t.name}.txt`, data: enc.encode(t.label ? t.label + '\n' : '') });
+  }
+  const byBall = new Map();
+  for (const t of samples) { if (!byBall.has(t.ball)) byBall.set(t.ball, []); byBall.get(t.ball).push(t); }
+  for (const [id, list] of byBall) {
+    const rows = list.map((t, i) => `${i},${t.label ? 1 : 0},${t.label ? t.x.toFixed(1) : 0},${t.label ? t.y.toFixed(1) : 0},${t.name}.jpg`);
+    files.push({ name: `sequences/${id}.csv`, data: enc.encode('Frame,Visibility,X,Y,Image\n' + rows.join('\n') + '\n') });
+  }
+  files.push({ name: 'data.yaml', data: enc.encode("train: images/train\nval: images/train\nnc: 1\nnames: ['ball']\n") });
+  files.push({ name: 'README.txt', data: enc.encode(
+    'Wicket Keepers ball tracker: training frames for a cricket-ball detector.\n\n'
+    + 'Each image is a 640x640 crop of the batter\'s end, as the detector sees it. Labels are YOLO format\n'
+    + '(class 0 = ball) and come from where the tracker placed the ball: check every frame. An empty\n'
+    + 'label file means the tracker did not place the ball there; the ball may still be in the picture.\n'
+    + 'sequences/*.csv lists each ball\'s frames in order (Frame, Visibility, X, Y, Image) for trackers\n'
+    + 'that learn from consecutive frames, such as TrackNet.\n'
+    + 'See tracker/MODEL.md in the repository for labelling and training.\n') });
+  return files;
+}

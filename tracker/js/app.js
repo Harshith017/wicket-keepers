@@ -4,7 +4,7 @@ import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack,
 import { FrameRing, Player } from './clips.js';
 import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote, CONTACT_AHEAD } from './bowling.js';
 import { decodeClipAudio, soundContact } from './sound.js';
-import { yoloLabel } from './detections.js';
+import { yoloLabel, trainingFiles } from './detections.js';
 import { makeZip } from './zip.js';
 import { CropRing, followToBatter, loadDetector } from './ml.js';
 import { findStumps, findNearStump, findFarStumps } from './stumps.js';
@@ -868,12 +868,12 @@ function collectTraining(ball, frames, start, pts, cam, s) {
   for (const f of frames) {
     if (f.t > tEnd || S.training.length >= MAX_TRAINING) break;
     const r = f.rect, sc = 640 / r.w, p = known.find((q) => Math.abs(q.t - f.t) < 0.002);
-    let label = '';
+    let label = '', x = null, y = null;
     if (p) {
-      const x = (p.u * s - r.x) * sc, y = (p.v * s - r.y) * sc;
-      if (x >= 0 && x < 640 && y >= 0 && y < 640) label = yoloLabel(x, y, Math.max(6, ballView * s * sc), 640);
+      const px = (p.u * s - r.x) * sc, py = (p.v * s - r.y) * sc;
+      if (px >= 0 && px < 640 && py >= 0 && py < 640) { x = px; y = py; label = yoloLabel(x, y, Math.max(6, ballView * s * sc), 640); }
     }
-    S.training.push({ b: f.b, label, name: `${ball.at}-${String(Math.round(f.t * 1000)).padStart(7, '0')}` });
+    S.training.push({ b: f.b, label, x, y, ball: String(ball.at), name: `${ball.at}-${String(Math.round(f.t * 1000)).padStart(7, '0')}` });
   }
   updateTrainingButton();
 }
@@ -885,19 +885,9 @@ function updateTrainingButton() {
 }
 async function exportTraining() {
   if (!S.training.length) return;
-  const enc = new TextEncoder(), files = [];
-  for (const t of S.training) {
-    files.push({ name: `images/train/${t.name}.jpg`, data: new Uint8Array(await t.b.arrayBuffer()) });
-    files.push({ name: `labels/train/${t.name}.txt`, data: enc.encode(t.label ? t.label + '\n' : '') });
-  }
-  files.push({ name: 'data.yaml', data: enc.encode("train: images/train\nval: images/train\nnc: 1\nnames: ['ball']\n") });
-  files.push({ name: 'README.txt', data: enc.encode(
-    'Wicket Keepers ball tracker: training frames for a cricket-ball detector.\n\n'
-    + 'Each image is a 640x640 crop of the batter\'s end, as the detector sees it. Labels are YOLO format\n'
-    + '(class 0 = ball) and come from where the tracker placed the ball: check every frame. An empty\n'
-    + 'label file means the tracker did not place the ball there; the ball may still be in the picture.\n'
-    + 'See tracker/MODEL.md in the repository for labelling and training.\n') });
-  const blob = new Blob([makeZip(files)], { type: 'application/zip' });
+  const samples = [];
+  for (const t of S.training) samples.push({ ...t, bytes: new Uint8Array(await t.b.arrayBuffer()) });
+  const blob = new Blob([makeZip(trainingFiles(samples))], { type: 'application/zip' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = `ball-frames-${new Date().toISOString().slice(0, 10)}.zip`;
   document.body.appendChild(a); a.click(); a.remove();

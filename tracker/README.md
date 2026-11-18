@@ -37,7 +37,11 @@ under the video says what rate you actually got).
 
 Recorded clips work too (**Video clip**): the clip waits on its first frame for
 calibration, then **Start session** analyses it at quarter speed so no frame is
-skipped, and the summary opens when it ends. iPhone clips are HEVC with HDR,
+skipped, and the summary opens when it ends. The line under the video shows the
+clip's real frame rate and how much one frame is worth in km/h.
+
+**For the most accurate speeds, record in slow motion (240 fps) and open the clip.**
+One frame is about 4 km/h on a 130 km/h ball at 60 fps, and about 1 km/h at 240 fps. iPhone clips are HEVC with HDR,
 which only Safari can play; elsewhere, record with Settings › Camera › Formats ›
 Most Compatible and HDR Video off. For iPhone slo-mo clips set the slow-motion
 factor in Setup.
@@ -54,6 +58,10 @@ factor in Setup.
 | `js/store.js` | Sessions and clips in the browser's IndexedDB (stays on the phone) |
 | `js/field.js` | Field presets, position names, draggable top-down field |
 | `js/sim.js` | Demo scene and delivery generator (also used by the tests) |
+| `js/ml.js` | Runs the ball detector near the batter; finds the bat contact between frames |
+| `js/detections.js` | Reads YOLO- and DETR-style detector outputs; the model description; training export files |
+| `js/sound.js` | Experimental: the bat's click in a clip's sound, for the contact time |
+| `js/zip.js` | Small zip writer for the training-frame export |
 | `js/app.js` | UI glue |
 
 No build step and no dependencies.
@@ -65,7 +73,9 @@ node tracker/test/run.mjs
 ```
 
 Generates deliveries with true physics, projects them through a virtual camera
-with pixel noise, and checks the reconstruction against the truth.
+with pixel noise, and checks the reconstruction against the truth. It also checks
+the flight timing at 60 and 240 fps, the bat-click finder on synthetic net sound,
+the detector output readers and the training export.
 
 ## Finding the ball near the batter
 
@@ -87,6 +97,11 @@ Third-party files in `vendor/`:
   public. Running the app privately or commercially needs an Ultralytics
   licence or a different model.
 
+A model trained on cricket balls, with a permissive licence, can replace it with
+no code change: see [MODEL.md](MODEL.md). **Setup › Collect training frames**
+keeps what the detector sees for each ball and exports it, with the ball marked,
+as a zip for a labelling tool.
+
 ## Why time of flight
 
 From behind the bowler the ball travels almost straight away from the lens. A
@@ -94,7 +109,24 @@ full 3D fit from one camera is then very sensitive to small calibration errors,
 and on real net footage it gave inconsistent speeds. The frames the ball leaves
 the hand and reaches the bat, with the pitch length, do not depend on that. Each
 frame at 60 fps is 17 ms, so a one-frame miss moves a 140 km/h reading by about
-5 km/h. The demo, filmed from a raised synthetic camera, still uses the 3D fit.
+5 km/h.
+
+The ball left the hand somewhere between the frame before it was first seen and that
+frame, and reached the bat between the last frame it was seen and the next, so each
+end is put halfway, at the clip's real frame interval (an unbiased guess at any frame
+rate). When the detector sees the ball leave the bat or pad, the contact is where the
+paths in and out meet in the picture, between frames. On simulated balls that removed
+an 8 ms bias at 60 fps (speeds read about 2 km/h high) and cut the median flight-time
+error at 240 fps from 4.2 to 0.8 ms.
+
+**Bat click timing** (Setup, experimental, off by default) goes further for clips:
+the bat's click in the clip's sound, less the sound's travel time back to the phone
+(about 59 ms over 20 m), pins the contact to well under a millisecond. It needs a
+quiet net (a click from the next net can be taken instead), and is not used for the
+live camera, whose microphone and frames are not reliably in step in a phone browser,
+or for slowed slo-mo clips.
+
+The demo, filmed from a raised synthetic camera, still uses the 3D fit.
 
 ## Limits worth knowing
 

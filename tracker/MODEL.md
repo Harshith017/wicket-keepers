@@ -102,3 +102,20 @@ bowler's marker, a white helmet badge. Keep the model only if it is closer more 
 misses less.
 
 Then remove `yolo11n.onnx` from `vendor/` and the AGPL note in the README.
+
+## Later: a tracker that reads several frames at once
+
+Single-frame detectors struggle most with exactly this ball: a few pixels, smeared by motion,
+crossing white clothing. Heatmap trackers built for small, fast balls look at three or more
+consecutive frames together, so the movement itself gives the ball away:
+[TrackNetV3](https://people.cs.nycu.edu.tw/~yushuen/data/TrackNetV3.pdf) (MIT),
+[TrackNetV4](https://time.anu.edu.au/paper-sites/tracknetv4/) and
+[WASB](https://github.com/nttcom/WASB-SBDT) (MIT, 8-17% better than earlier trackers in its
+authors' tests across five sports). None has been trained on cricket, and each takes a
+different input (TrackNetV3 also feeds a background frame), so the tracker does not run one yet.
+
+The export already holds what they train on: `sequences/*.csv` lists each ball's frames in
+order with the ball's position (Frame, Visibility, X, Y), the layout TrackNet's tools use, next
+to the images. Once there are a few thousand checked frames, fine-tune one of these on them,
+export it to ONNX, and the tracker can be taught its input and output, the way `detections.js`
+reads YOLO and DETR models today.

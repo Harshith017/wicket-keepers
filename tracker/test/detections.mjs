@@ -1,5 +1,5 @@
 // Reading detector outputs (both model kinds), the model description, labels and the zip.
-import { parseYolo, parseDetr, detrOutputs, modelConfig, yoloLabel } from '../js/detections.js';
+import { parseYolo, parseDetr, detrOutputs, modelConfig, yoloLabel, trainingFiles } from '../js/detections.js';
 import { makeZip, crc32 } from '../js/zip.js';
 
 export function detectionChecks(check) {
@@ -26,4 +26,16 @@ export function detectionChecks(check) {
   const z = makeZip([{ name: 'a.txt', data: new TextEncoder().encode('hi') }]);
   const dv = new DataView(z.buffer);
   check('zip: local header, then end record with one file', dv.getUint32(0, true) === 0x04034b50 && dv.getUint32(z.length - 22, true) === 0x06054b50 && dv.getUint16(z.length - 12, true) === 1);
+
+  // a training export: two balls, one frame without a mark
+  const jpg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+  const samples = [
+    { name: '1-0000100', ball: '1', bytes: jpg, label: yoloLabel(320, 300, 8, 640), x: 320, y: 300 },
+    { name: '1-0000117', ball: '1', bytes: jpg, label: '', x: null, y: null },
+    { name: '2-0000400', ball: '2', bytes: jpg, label: yoloLabel(100, 50, 8, 640), x: 100, y: 50 },
+  ];
+  const files = trainingFiles(samples), names = files.map((f) => f.name);
+  const seq = new TextDecoder().decode(files.find((f) => f.name === 'sequences/1.csv').data);
+  check('training export: images, labels, sequences, data.yaml', names.includes('images/train/1-0000117.jpg') && names.includes('labels/train/2-0000400.txt') && names.includes('sequences/2.csv') && names.includes('data.yaml'));
+  check('training export: sequence rows', seq === 'Frame,Visibility,X,Y,Image\n0,1,320.0,300.0,1-0000100.jpg\n1,0,0,0,1-0000117.jpg\n');
 }
