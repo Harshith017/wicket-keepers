@@ -150,7 +150,14 @@ export function measureDelivery(obs, cam, L, hand) {
 export function deliveryStart(obs, cam, L, minSize = 0) {
   if (!cam) return -1;
   const W = 2 * cam.cx;
-  const hand = [[0, 2.0], [0, 2.5], [0.8, 2.2], [-0.8, 2.2]].map(([x, z]) => project(cam, [x, L - RELEASE_AHEAD, z]));
+  // Where the ball can first be seen clear: the release point, and the first few metres of its
+  // flight (the bowler's body often hides it for a moment, and the release height varies), at
+  // the heights a bowled ball has there.
+  const hand = [];
+  for (const ahead of [0, 1, 2, 3]) for (const [x, z] of [[0, 2.0], [0, 2.5], [0.8, 2.2], [-0.8, 2.2], [0, 1.6]]) {
+    const p = project(cam, [x, L - RELEASE_AHEAD - ahead, z - 0.12 * ahead]);
+    if (p[2] > 0.05) hand.push(p);
+  }
   // How fast a slow delivery (50 km/h) just out of the hand crosses the picture from where this
   // camera stands. From behind the bowler the ball flies almost straight away from the lens, so
   // this can be small (a low camera a few metres back sees it move only a few pixels a frame);
