@@ -2,7 +2,7 @@ import { calibrate, calibrateFromTaps, project, makeCam, groundPoint } from './g
 import { MapView } from './maps.js';
 import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack, CREASE, STUMP_H } from './physics.js';
 import { FrameRing, Player } from './clips.js';
-import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote, CONTACT_AHEAD } from './bowling.js';
+import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote, CONTACT_AHEAD, trimAtBatter } from './bowling.js';
 import { decodeClipAudio, soundContact } from './sound.js';
 import { yoloLabel, trainingFiles, pickForUpload } from './detections.js';
 import { signIn, signOut, signedInEmail, sendFrames } from './pipeline.js';
@@ -508,7 +508,8 @@ function onTrack(candidates) {
     // it must start where the bowler lets go of the ball (anything joined on before that is dropped)
     const minSize = demo ? 0 : MIN_RELEASE_PX * (S.procScale || 1) ** 2;
     const i0 = deliveryStart(path, S.cam, L, minSize);
-    const obs = i0 > 0 ? path.slice(i0) : path;
+    // from the release, and only as far as the batter: a ball hit back is followed on by the tracker
+    const from = i0 > 0 ? path.slice(i0) : path, obs = demo ? from : trimAtBatter(from, S.cam);   // the demo keeps the shot for its 3D fit
     // nobody bowls twice within a couple of seconds: anything that soon is the last ball moving on
     if (obs[0].t < S.lastBallEnd + 2.5 && obs[0].t > S.lastBallEnd - 5) { reject(path, 'too soon after the last ball'); continue; }
     const a = analyseTrack(obs, S.cam, { L, hand: F.hand, rmsMax: 5 * W / 1280 });
