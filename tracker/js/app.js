@@ -150,7 +150,7 @@ async function setSource(kind, file) {
     recalibrate();
     src.start(onFrame);
     if (kind === 'file') S.status = 'Clip loaded \u2014 finding the stumps\u2026';
-    if (kind !== 'demo') setTimeout(async () => { const ok = await autoCalibrate(false); S.status = ok ? (kind === 'file' ? 'Stumps found \u2014 tap Start session' : 'Stumps found \u2014 ready') : 'Couldn\u2019t find the stumps \u2014 tap Calibrate pitch'; updatePill(); }, kind === 'file' ? 300 : 1200);
+    if (kind !== 'demo') setTimeout(async () => { if (S.calibrating) return; const ok = await autoCalibrate(false); S.status = ok ? (kind === 'file' ? 'Stumps found \u2014 tap Start session' : 'Stumps found \u2014 ready') : 'Couldn\u2019t find the stumps \u2014 tap Calibrate pitch'; updatePill(); }, kind === 'file' ? 300 : 1200);
     if (navigator.wakeLock && !wakeLock) navigator.wakeLock.request('screen').then((l) => { wakeLock = l; l.addEventListener('release', () => { wakeLock = null; }); }).catch(() => {});
   } catch (err) {
     document.querySelectorAll('#srcSeg button').forEach((b) => b.classList.remove('on'));
@@ -166,6 +166,15 @@ async function setSource(kind, file) {
 
 // ---------------------------------------------------------------- calibration
 const quick = () => settings.calMode === 'quick';
+// Guided calibration: one point at a time on a still picture. Order: your stump, then the batter's.
+const STEP_PT = [1, 0, 2];
+const STEPS = [
+  ['Bottom of your stump', 'The stump nearest the camera, where it meets the ground.'],
+  ['Bottom of the batter\u2019s stumps', 'Where the far stumps meet the ground.'],
+  ['Top of the batter\u2019s stumps', 'The very top of the far stumps (the bails).'],
+];
+const SLIDE_GAIN = 0.3;
+const guided = () => S.calibrating && quick() && S.calStep != null && !S.tapStep;
 const handlePts = () => (quick() ? S.quickPts : S.calibPts);
 function demoPts(src) {
   if (!quick()) return src.corners();
@@ -219,6 +228,13 @@ const handleOffset = () => 0;
 view.addEventListener('pointerdown', (e) => {
   if (S.tapStep) { onStumpTap(e); return; }
   if (!S.calibrating) return;
+  if (guided()) {
+    // trackpad-style: slide anywhere, the cross follows at a fraction of the finger's movement
+    const [x, y] = canvasPos(e), i = STEP_PT[S.calStep];
+    S.drag = i; S.dragFrom = [x, y]; S.dragStart = handlePts()[i].slice();
+    view.setPointerCapture(e.pointerId); e.preventDefault();
+    return;
+  }
   const [x, y, sc] = canvasPos(e), ar = view.height / view.width;
   let bi = -1, bd = 44 / (sc * view.width);
   handlePts().forEach((p, i) => {
@@ -234,11 +250,17 @@ view.addEventListener('pointerdown', (e) => {
 view.addEventListener('pointermove', (e) => {
   if (S.drag < 0) return;
   const [x, y] = canvasPos(e);
+  if (guided()) {
+    const g = SLIDE_GAIN, p0 = S.dragStart;
+    handlePts()[S.drag] = [Math.min(1, Math.max(0, p0[0] + (x - S.dragFrom[0]) * g)), Math.min(1, Math.max(0, p0[1] + (y - S.dragFrom[1]) * g))];
+    recalibrate(); refresh();
+    return;
+  }
   handlePts()[S.drag] = [Math.min(1, Math.max(0, x + S.dragOff[0])), Math.min(1, Math.max(0, y + S.dragOff[1]))];
   recalibrate();
   refresh();
 });
-const endDrag = () => { if (S.drag >= 0) { S.drag = -1; save(); refresh(); syncControls(); grabFrame().then(rememberStumps); } };
+const endDrag = () => { if (S.drag >= 0) { S.drag = -1; save(); refresh(); syncControls(); if (!S.freeze) grabFrame().then(rememberStumps); } };
 // A paused clip has no new frames coming, so redraw by hand.
 function refresh() { if (S.source && S.source.paused) onFrame(Math.max(0, S.lastT)); }
 view.addEventListener('pointerup', endDrag); view.addEventListener('pointercancel', endDrag);
@@ -255,9 +277,10 @@ function onFrame(t) {
   }
   if (t < S.lastT || t - S.lastT > 1.5) { detector.reset(); tracker.reset(); S.live = null; S.lastBallEnd = -100; }
   S.lastT = t;
-  src.drawTo(vctx, W, H);
+  if (S.freeze && S.calibrating && S.freeze.width === W) vctx.putImageData(S.freeze, 0, 0);
+  else src.drawTo(vctx, W, H);
   if (S.wantFrame) { const r = S.wantFrame; S.wantFrame = null; r(vctx.getImageData(0, 0, W, H)); }
-  if (S.drag >= 0) grabLoupe(W, H);
+  if (S.drag >= 0 || guided()) grabLoupe(W, H);
   if (S.session) ring.capture(view, t);
   if (S.session && S.cam && src.kind !== 'demo') captureBatterEnd(t);
 
@@ -286,7 +309,7 @@ function onFrame(t) {
 function updatePill() {
   let txt, kind = 'live';
   if (!S.cam) { txt = 'Not calibrated'; kind = 'bad'; }
-  else if (S.calibrating) { txt = quick() ? 'Drag the three markers into place' : 'Drag the corners onto the pitch'; kind = 'busy'; }
+  else if (S.calibrating) { txt = guided() ? `Step ${S.calStep + 1} of 3: ${STEPS[S.calStep][0].toLowerCase()}` : quick() ? 'Drag the three markers into place' : 'Drag the corners onto the pitch'; kind = 'busy'; }
   else if (!S.session) { txt = 'Ready \u2014 tap Start session'; kind = ''; }
   else if (S.camLow && !S.live) { txt = `Camera too low \u2014 raise it to ${MIN_CAM_HEIGHT * 100} cm or more`; kind = 'bad'; }
   else if (S.live) { txt = 'Tracking…'; kind = 'busy'; }
@@ -305,14 +328,23 @@ const loupe = document.createElement('canvas'), lctx = loupe.getContext('2d');
 loupe.width = loupe.height = 220;
 function grabLoupe(W, H) {
   const shown = view.getBoundingClientRect().width, r = 14 * (shown ? view.width / shown : W / 1280);
-  const p = handlePts()[S.drag];
+  const p = handlePts()[loupePt()];
   lctx.fillStyle = '#000'; lctx.fillRect(0, 0, 220, 220);
   lctx.imageSmoothingEnabled = false;
   lctx.drawImage(view, p[0] * W - r, p[1] * H - r, 2 * r, 2 * r, 0, 0, 220, 220);
 }
+const loupePt = () => (S.drag >= 0 ? S.drag : STEP_PT[S.calStep]);
 function drawLoupe(W, H, k) {
-  const p = handlePts()[S.drag], x = p[0] * W, y = p[1] * H, R = 60 * k;
-  const cx = Math.min(W - R - 8 * k, Math.max(R + 8 * k, x)), cy = y > 2.6 * R ? y - 1.5 * R : y + 1.5 * R;
+  const p = handlePts()[loupePt()], x = p[0] * W, y = p[1] * H;
+  let R, cx, cy;
+  if (guided()) {
+    // a big magnifier in the top corner away from the point
+    R = 85 * k; cy = R + 48 * k; cx = x > W / 2 ? R + 12 * k : W - R - 12 * k;
+    if (y < 2.4 * R + 12 * k) cy = H - R - 12 * k;
+  } else {
+    R = 60 * k;
+    cx = Math.min(W - R - 8 * k, Math.max(R + 8 * k, x)); cy = y > 2.6 * R ? y - 1.5 * R : y + 1.5 * R;
+  }
   const c = vctx;
   c.save();
   c.beginPath(); c.arc(cx, cy, R, 0, 7); c.clip();
@@ -325,6 +357,12 @@ function drawLoupe(W, H, k) {
 }
 
 // ---------------------------------------------------------------- overlay
+function crossAt(c, x, y, r, gap) {
+  c.beginPath();
+  c.moveTo(x - r, y); c.lineTo(x - gap, y); c.moveTo(x + gap, y); c.lineTo(x + r, y);
+  c.moveTo(x, y - r); c.lineTo(x, y - gap); c.moveTo(x, y + gap); c.lineTo(x, y + r);
+  c.stroke();
+}
 function poly(pts3, color, width, W) {
   const c = vctx;
   c.beginPath();
@@ -344,6 +382,19 @@ function drawOverlay(W, H) {
     poly([[hw, 0, 0], [-hw, 0, 0], [-hw, L, 0], [hw, L, 0], [hw, 0, 0]], col, 2, W);
     for (const y of [CREASE, L - CREASE]) poly([[-hw, y, 0], [hw, y, 0]], col, 1.5, W);
     for (const y of [0, L]) for (const x of [-0.1143, 0, 0.1143]) poly([[x, y, 0], [x, y, STUMP_H]], col, 2, W);
+  }
+  if (S.calibrating && guided()) {
+    const shown = view.getBoundingClientRect().width;
+    const k = shown ? view.width / shown : W / 1280;
+    handlePts().forEach((p, i) => {
+      const x = p[0] * W, y = p[1] * H, cur = STEP_PT[S.calStep] === i;
+      if (!cur) { c.beginPath(); c.arc(x, y, 4 * k, 0, 7); c.fillStyle = 'rgba(255,224,102,.8)'; c.fill(); return; }
+      // a cross with a gap in the middle, so the exact spot stays visible
+      c.strokeStyle = 'rgba(0,0,0,.6)'; c.lineWidth = 4 * k; crossAt(c, x, y, 26 * k, 5 * k);
+      c.strokeStyle = '#ffe066'; c.lineWidth = 2 * k; crossAt(c, x, y, 26 * k, 5 * k);
+    });
+    drawLoupe(W, H, k);
+    return;
   }
   if (S.calibrating) {
     // handles are sized for the finger, in screen pixels, whatever the video size
@@ -596,14 +647,42 @@ function applyStumps(near, far, W, H) {
   S.quickPts = [[far.x / W, far.base / H], [near.x / W, near.base / H], [far.x / W, far.top / H]];
   if (settings.calMode !== 'quick') settings.calMode = 'quick';
   recalibrate(); save(); syncControls(); refresh();
-  grabFrame().then(rememberStumps);
+  if (!(S.freeze && S.calibrating)) grabFrame().then(rememberStumps);
+}
+/** Start calibrating on a still of the current picture, so it does not shake while you point. */
+async function startCalibration() {
+  S.freeze = null;
+  const img = await grabFrame();
+  S.freeze = img;
+  S.calibrating = true; S.calHint = null; S.tapStep = null; S.calStep = quick() ? 0 : null;
+  detector.reset(); tracker.reset();
+  syncControls(); refresh();
+}
+function finishCalibration() {
+  S.calibrating = false; S.calHint = null; S.tapStep = null; S.calStep = null;
+  // the markers were placed on the still: remember the stumps there, then follow the live picture
+  if (S.freeze) rememberStumps(S.freeze);
+  S.freeze = null; S.alignVote = null;
+  detector.reset(); tracker.reset(); save(); syncControls(); refresh();
+}
+function syncSteps() {
+  const on = guided();
+  $('calSteps').hidden = !on;
+  if (!on) return;
+  const [title, hint] = STEPS[S.calStep];
+  $('stepNum').textContent = `Step ${S.calStep + 1} of 3`;
+  $('stepTitle').textContent = title;
+  $('stepHint').textContent = hint + ' Slide a finger anywhere on the picture to move the cross.';
+  document.querySelectorAll('#stepDots i').forEach((d, i) => d.classList.toggle('on', i <= S.calStep));
+  $('stepBack').disabled = S.calStep === 0;
+  $('stepNext').textContent = S.calStep === 2 ? 'Done' : 'Next';
 }
 /** Look at several frames, keep the answer they agree on. */
 async function autoCalibrate(user) {
   if (!S.source || S.source.kind === 'demo') return false;
   if (user) showCalHint('Looking for the stumps\u2026');
   const found = [];
-  const n = S.source.paused ? 1 : 7;
+  const n = S.source.paused || (S.freeze && S.calibrating) ? 1 : 7;
   let W = 0, H = 0;
   for (let k = 0; k < n; k++) {
     const img = await grabFrame();
@@ -617,6 +696,7 @@ async function autoCalibrate(user) {
     const agree = found.filter((r) => Math.abs(r.far.x - far.x) <= 4 && Math.abs(r.far.base - far.base) <= 5 && Math.abs(r.near.x - near.x) <= 4).length;
     if (agree >= Math.max(1, Math.ceil(found.length * 0.6)) && far.base - far.top > 0.008 * H) {
       applyStumps(near, far, W, H);
+      if (S.calibrating && quick()) { S.calStep = 0; syncSteps(); }
       showCalHint(S.cam ? 'Stumps found. Check the yellow markers sit on the bottom and top of the batter\u2019s stumps and the bottom of yours; drag one if not.' : 'Stumps found, but they don\u2019t fit together. Tap the stumps instead.');
       return !!S.cam;
     }
@@ -635,7 +715,8 @@ async function onStumpTap(e) {
   if (!near) near = { x: S.taps.near[0], base: S.taps.near[1] };
   if (!far) far = { x: S.taps.far[0], base: S.taps.far[1] + 0.012 * H, top: S.taps.far[1] - 0.012 * H };
   applyStumps(near, far, W, H);
-  showCalHint('Placed. If a yellow marker is off, drag it onto the bottom or top of the stump.');
+  S.calStep = 0; syncControls();
+  showCalHint('Placed. Check each point, then tap Next.');
 }
 // While a session runs, follow the picture if the stand moves. At calibration the
 // areas around both sets of stumps are remembered; each check finds where those
@@ -694,7 +775,11 @@ async function realign() {
   const W = A.W, H = A.H;
   const next = [[A.pts[0][0] + f.dx / W, A.pts[0][1] + f.dy / H], [A.pts[1][0] + n.dx / W, A.pts[1][1] + n.dy / H], [A.pts[2][0] + f.dx / W, A.pts[2][1] + f.dy / H]];
   const moved = Math.max(...next.map((p, i) => Math.hypot((p[0] - S.quickPts[i][0]) * W, (p[1] - S.quickPts[i][1]) * H)));
-  if (moved < 1) return;
+  // small wobbles are left alone, so the markers stay put; a real knock shows in two checks running
+  if (moved < 3) { S.alignVote = null; return; }
+  const v = S.alignVote, same = v && Math.hypot(v.dx - n.dx, v.dy - n.dy) <= 2;
+  S.alignVote = { dx: n.dx, dy: n.dy };
+  if (!same) return;
   S.quickPts = next;
   recalibrate(); S.realignedAt = performance.now(); updatePill();
 }
@@ -988,10 +1073,12 @@ function syncControls() {
   $('sessBtn').textContent = S.session ? 'End session' : 'Start session';
   $('sessBtn').classList.toggle('warn', !!S.session);
   $('calPanel').hidden = !S.calibrating;
+  syncSteps();
   $('camHRow').hidden = !quick();
   $('camH').value = settings.camH;
   $('pitchLen').value = [20.12, 21.95].includes(settings.L) ? String(settings.L) : 'custom';
   $('autoRow').hidden = !quick();
+  $('calHelp').hidden = guided() && !S.calHint;
   $('calHelp').textContent = S.calHint && S.calibrating ? S.calHint : quick()
     ? 'Drag the markers onto the bottom and the top of the batter\u2019s stumps, and the bottom of your stumps. If the batter hides their stumps, move the phone a little to one side. Then enter the phone\u2019s height from the ground.'
     : 'Drag the four corners onto the corners of the pitch: the stump line at each end, at the edges of the pitch.';
@@ -1012,8 +1099,16 @@ $('calModeSeg').addEventListener('click', (e) => {
 });
 $('fileIn').addEventListener('change', (e) => { const f = e.target.files[0]; if (f) setSource('file', f); e.target.value = ''; });
 $('autoCal').addEventListener('click', () => autoCalibrate(true));
-$('tapCal').addEventListener('click', () => { S.tapStep = 'near'; S.taps = {}; S.calibrating = true; syncControls(); showCalHint('Tap your stump (the one in front of the camera).'); refresh(); });
-$('calBtn').addEventListener('click', () => { S.calibrating = !S.calibrating; S.calHint = null; S.tapStep = null; detector.reset(); tracker.reset(); if (!S.calibrating) save(); syncControls(); refresh(); });
+$('tapCal').addEventListener('click', async () => { if (!S.calibrating) await startCalibration(); S.tapStep = 'near'; S.taps = {}; syncControls(); showCalHint('Tap your stump (the one in front of the camera).'); refresh(); });
+$('calBtn').addEventListener('click', () => { if (S.calibrating) finishCalibration(); else startCalibration(); });
+$('stepNext').addEventListener('click', () => { if (S.calStep >= 2) finishCalibration(); else { S.calStep++; syncControls(); refresh(); } });
+$('stepBack').addEventListener('click', () => { if (S.calStep > 0) { S.calStep--; syncControls(); refresh(); } });
+document.querySelectorAll('#calSteps .nudge').forEach((b) => b.addEventListener('click', () => {
+  if (!guided()) return;
+  const [dx, dy] = b.dataset.n.split(',').map(Number), i = STEP_PT[S.calStep], p = handlePts()[i];
+  handlePts()[i] = [p[0] + dx / view.width, p[1] + dy / view.height];
+  recalibrate(); save(); refresh();
+}));
 $('sessBtn').addEventListener('click', () => { if (S.session) endSession(true); else startSession(); });
 $('pitchLen').addEventListener('change', () => {
   const v = $('pitchLen').value;
