@@ -817,7 +817,7 @@ async function refineWithDetector(ball) {
     const pts = await followToBatter(frames, start, toView, null, near);
     if (pts.length) {
       ball.obs.push(...pts.map((p) => [+p.t.toFixed(4), Math.round(p.u), Math.round(p.v)]));
-      ball.marks.arrive = pts[pts.length - 1].t;
+      ball.marks.arrive = pts.contact != null ? pts.contact : pts[pts.length - 1].t;   // between frames when it could be worked out
       ball.arriveBy = 'detector';
       applyMarks(ball);
     } else ball.arriveBy = 'motion';

@@ -70,14 +70,49 @@ export function tofSpeed(tRelease, tArrive, L, known) {
 /** The release-to-bat distance that makes this ball the given speed (m/s). */
 export const distanceFromKnown = (tRelease, tArrive, speed) => speed / RELEASE_OVER_AVERAGE * (tArrive - tRelease);
 
+/** The time between frames of a tracked path (s): the median step, so a few missed frames do not count. */
+export function frameInterval(obs) {
+  const d = [];
+  for (let i = 1; i < obs.length; i++) { const s = obs[i].t - obs[i - 1].t; if (s > 0) d.push(s); }
+  if (!d.length) return 1 / 60;
+  d.sort((a, b) => a - b);
+  return d[d.length >> 1];
+}
+
+/**
+ * When the ball met the bat or pad, between frames. `before` are the last points on the
+ * way in, `after` the first one or two on the way out ({ t, u, v }). The ball comes in on
+ * a straight line in the picture and leaves on another; the contact is where they meet.
+ * With only one point after, or no clear change of direction, it is halfway between frames,
+ * the best guess when nothing more is known.
+ */
+export function contactTime(before, after) {
+  const p = before[before.length - 1], q = after[0], gap = q.t - p.t;
+  const mid = p.t + gap / 2;
+  if (before.length < 2 || after.length < 2 || !(gap > 0)) return mid;
+  const p0 = before[before.length - 2], q1 = after[1];
+  const a = [(p.u - p0.u) / (p.t - p0.t), (p.v - p0.v) / (p.t - p0.t)];
+  const w = [(q1.u - q.u) / (q1.t - q.t), (q1.v - q.v) / (q1.t - q.t)];
+  const d = [a[0] - w[0], a[1] - w[1]], dd = d[0] * d[0] + d[1] * d[1];
+  // the paths in and out barely differ: the picture cannot say where in the gap it happened
+  if (!(dd > 1e-6) || Math.sqrt(dd) < 0.15 * Math.hypot(a[0], a[1])) return mid;
+  const r = [q.u - p.u - w[0] * gap, q.v - p.v - w[1] * gap];
+  const tau = (d[0] * r[0] + d[1] * r[1]) / dd;
+  return p.t + Math.min(gap, Math.max(0, tau));
+}
+
 /**
  * Bowling numbers for a tracked delivery: { tRelease, tArrive, speed, bounce: { t, u, v, x, y } }.
  * x is across the pitch from the middle stump (+ = off side for a right-hander), y is the
  * distance from the batter's stumps.
  */
 export function measureDelivery(obs, cam, L, hand) {
-  const tRelease = obs[0].t - 1 / 120;           // the ball left the hand about half a frame before it was first seen clear
-  const tArrive = obs[obs.length - 1].t;         // last seen: usually as it reaches the batter
+  // The ball left the hand somewhere between the frame before it was first seen clear and that
+  // frame, and reached the batter between the last frame it was seen and the next: halfway is the
+  // unbiased guess at any frame rate (half a frame is 8 ms at 60 fps, 2 ms in 240 fps slow motion).
+  const half = frameInterval(obs) / 2;
+  const tRelease = obs[0].t - half;
+  const tArrive = obs[obs.length - 1].t + half;
   const out = { tRelease, tArrive, speed: tofSpeed(tRelease, tArrive, L), bounce: null };   // speed is rescaled by the app if a known ball set the distance
   const b = imageBounce(obs);
   if (b && cam) {
