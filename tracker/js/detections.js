@@ -96,3 +96,17 @@ export function trainingFiles(samples) {
     + 'See tracker/MODEL.md in the repository for labelling and training.\n') });
   return files;
 }
+
+/**
+ * The frames of one ball worth sending to the training pipeline without anyone checking
+ * them: those where the detector itself confirmed the ball (score at least `minScore`), at
+ * most `max`, spread evenly over the ball's approach. Frames only the motion tracker placed,
+ * or with no ball placed, are left out: an unchecked wrong label teaches the model wrong.
+ */
+export function pickForUpload(samples, max = 8, minScore = 0.5) {
+  const good = samples.filter((t) => t.label && t.by === 'detector' && t.score >= minScore);
+  if (good.length <= max) return good;
+  const out = [];
+  for (let k = 0; k < max; k++) out.push(good[Math.round(k * (good.length - 1) / (max - 1))]);
+  return out;
+}

@@ -1,0 +1,31 @@
+// Wicket Keepers ball tracker: rules for the training-frame pipeline (MODEL.md).
+//
+// Paste the "match /ballFrames/{id}" block inside the existing
+//   match /databases/{database}/documents { ... }
+// in Firebase console > Firestore Database > Rules, next to the rules already there, and Publish.
+//
+// - Only signed-in people already approved in the main app (a people/<email> document)
+//   can add frames, one small image each, stamped with their own account.
+// - Anyone can read them: the frames go to a public Roboflow project anyway, and the weekly
+//   job that moves them there reads them without signing in.
+// - Nobody can change a frame. Frames older than 7 days can be deleted by anyone, which is how
+//   the weekly job clears what it has already moved, keeping the database small. Approved
+//   admins (trip/admins) can delete any frame.
+
+    match /ballFrames/{id} {
+      allow read: if true;
+      allow create: if request.auth != null
+        && request.auth.token.email_verified == true
+        && exists(/databases/$(database)/documents/people/$(request.auth.token.email.lower()))
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['img', 'label', 'score', 'by', 'ball', 'w', 'uid', 'createdAt'])
+        && request.resource.data.img is string
+        && request.resource.data.img.size() < 700000
+        && request.resource.data.label is string
+        && request.resource.data.label.size() < 100
+        && request.resource.data.createdAt == request.time;
+      allow update: if false;
+      allow delete: if resource.data.createdAt < request.time - duration.value(7, 'd')
+        || (request.auth != null
+            && request.auth.token.email.lower() in get(/databases/$(database)/documents/trip/admins).data.emails);
+    }

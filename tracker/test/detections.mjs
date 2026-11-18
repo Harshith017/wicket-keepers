@@ -1,5 +1,5 @@
 // Reading detector outputs (both model kinds), the model description, labels and the zip.
-import { parseYolo, parseDetr, detrOutputs, modelConfig, yoloLabel, trainingFiles } from '../js/detections.js';
+import { parseYolo, parseDetr, detrOutputs, modelConfig, yoloLabel, trainingFiles, pickForUpload } from '../js/detections.js';
 import { makeZip, crc32 } from '../js/zip.js';
 
 export function detectionChecks(check) {
@@ -38,4 +38,13 @@ export function detectionChecks(check) {
   const seq = new TextDecoder().decode(files.find((f) => f.name === 'sequences/1.csv').data);
   check('training export: images, labels, sequences, data.yaml', names.includes('images/train/1-0000117.jpg') && names.includes('labels/train/2-0000400.txt') && names.includes('sequences/2.csv') && names.includes('data.yaml'));
   check('training export: sequence rows', seq === 'Frame,Visibility,X,Y,Image\n0,1,320.0,300.0,1-0000100.jpg\n1,0,0,0,1-0000117.jpg\n');
+
+  // frames sent without anyone checking them: only those the detector was sure of
+  const mk = (k, by, score, label = 'x') => ({ name: String(k), by, score, label });
+  const pool = [mk(0, 'motion', null), mk(1, 'detector', 0.9), mk(2, 'detector', 0.3), mk(3, 'none', null, ''), mk(4, 'detector', 0.7)];
+  const picked = pickForUpload(pool);
+  check('upload: only confident detector frames', picked.map((t) => t.name).join() === '1,4');
+  const many = Array.from({ length: 30 }, (_, k) => mk(k, 'detector', 0.8));
+  const spread = pickForUpload(many, 8);
+  check('upload: at most 8 per ball, spread from first to last', spread.length === 8 && spread[0].name === '0' && spread[7].name === '29');
 }
