@@ -143,7 +143,7 @@ export class Tracker {
         finished = [];
         const near = (p, q) => Math.hypot(p.u - q.u, p.v - q.v) <= 0.3 * W;
         for (const seed of seeds) {
-          if (usedTr.has(seed) || finished.length >= 4) continue;
+          if (usedTr.has(seed) || finished.length >= 12) continue;   // the bowler's run-up leaves many paths: keep enough that the ball's is among them
           usedTr.add(seed);
           let chain = seed.pts.slice();
           for (let guard = 0; guard < 4; guard++) {
