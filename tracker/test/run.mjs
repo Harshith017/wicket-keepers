@@ -3,6 +3,9 @@
 import { lookAtCam, project, calibrate, calibrateStumps } from '../js/geometry.js';
 import { analyseDelivery, simulateShot } from '../js/physics.js';
 import { generateDelivery } from '../js/sim.js';
+import { timingChecks } from './timing.mjs';
+import { soundChecks } from './sound.mjs';
+import { detectionChecks } from './detections.mjs';
 
 let seed = 7;
 const rnd = () => { let t = (seed += 0x6d2b79f5); t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
@@ -87,6 +90,10 @@ const toCover = simulateShot([0, 1.2, 0.5], [13, 14, 1], field);
 check('push to cover is FIELDED by cover', toCover.outcome === 'FIELDED' && toCover.by.name === 'cover', toCover.outcome);
 const edge = simulateShot([0, 1.2, 0.8], [0.3, -25, 1.5], field);
 check('edge behind is CAUGHT by keeper', edge.outcome === 'CAUGHT' && edge.by.name === 'keeper', edge.outcome);
+
+timingChecks(check, rnd);
+soundChecks(check, rnd);
+detectionChecks(check);
 
 console.log(fails ? `\n${fails} check(s) failed` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

@@ -2,7 +2,10 @@ import { calibrate, calibrateFromTaps, project, makeCam, groundPoint } from './g
 import { MapView } from './maps.js';
 import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack, CREASE, STUMP_H } from './physics.js';
 import { FrameRing, Player } from './clips.js';
-import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance } from './bowling.js';
+import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote, CONTACT_AHEAD } from './bowling.js';
+import { decodeClipAudio, soundContact } from './sound.js';
+import { yoloLabel, trainingFiles } from './detections.js';
+import { makeZip } from './zip.js';
 import { CropRing, followToBatter, loadDetector } from './ml.js';
 import { findStumps, findNearStump, findFarStumps } from './stumps.js';
 import { putSession, allSessions, putClip, getClip, deleteSession } from './store.js';
@@ -17,7 +20,7 @@ const MAX_VIEW = 1280;           // frames are worked on at up to this many pixe
 
 // ---------------------------------------------------------------- state
 const saved = (() => { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) { return {}; } })();
-const settings = Object.assign({ L: 20.12, rectW: 3.05, units: 'kmh', sens: 45, procW: 960, slowmo: 1, calMode: 'quick', camH: 150 }, saved.settings);
+const settings = Object.assign({ L: 20.12, rectW: 3.05, units: 'kmh', sens: 45, procW: 960, slowmo: 1, calMode: 'quick', camH: 150, sound: 'off', collect: 'off' }, saved.settings);
 if (settings.calMode === 'stumps') settings.calMode = 'quick';      // the old stump mode became the quick setup
 const F = {                                   // field state, shared by both field views
   L: settings.L, boundary: saved.boundary || 65, hand: saved.hand || 'R',
@@ -79,6 +82,7 @@ class VideoSource {
       video.srcObject = this.stream; video.loop = false;
     } else {
       this.url = URL.createObjectURL(file);
+      this.file = file; this.audio = null;
       video.srcObject = null; video.loop = false;
       video.muted = true; video.playsInline = true; video.preload = 'auto';
       // iPhone Safari only reports the clip's size until it is played, so wait for
@@ -107,11 +111,22 @@ class VideoSource {
   async playFromStart() {
     video.onended = () => { video.onended = null; onClipEnd(); };
     video.currentTime = 0;
+    this.frameSteps = []; this.lastMediaTime = null; this.clipFps = null;
     await video.play();
     video.playbackRate = window.__clipRate || 0.25;
     if (!this.running) this.start(this.onFrame);
   }
   get paused() { return this.kind === 'file' && video.paused; }
+  /** The clip's own frame rate, from the steps between the frames it shows (a skipped frame does not count). */
+  noteFrame(mt) {
+    if (this.lastMediaTime != null) { const d = mt - this.lastMediaTime; if (d > 0 && d < 0.5) this.frameSteps.push(d); }
+    this.lastMediaTime = mt;
+    if (this.frameSteps.length === 30) {
+      const s = this.frameSteps.slice().sort((a, b) => a - b);
+      this.clipFps = 1 / s[s.length >> 1];
+      showClipRate(this);
+    }
+  }
   start(onFrame) {
     this.running = true; this.onFrame = onFrame;
     if (this.kind === 'file' && video.paused) setTimeout(() => onFrame(video.currentTime), 0);   // show the first frame
@@ -119,7 +134,10 @@ class VideoSource {
     const tick = (now, meta) => {
       if (!this.running) return;
       let t;
-      if (this.kind === 'file') t = (meta ? meta.mediaTime : video.currentTime) / Math.max(1, settings.slowmo);
+      if (this.kind === 'file') {
+        t = (meta ? meta.mediaTime : video.currentTime) / Math.max(1, settings.slowmo);
+        if (meta && this.frameSteps) this.noteFrame(meta.mediaTime);
+      }
       else t = meta ? (meta.captureTime !== undefined ? meta.captureTime / 1000 : meta.mediaTime) : now / 1000;
       onFrame(t);
       if (useRvfc) video.requestVideoFrameCallback(tick); else requestAnimationFrame(tick);
@@ -212,8 +230,17 @@ function recalibrate() {
   if (src.kind === 'camera' && src.camFps) {
     info += src.camFps >= 55 ? ` \u00b7 Camera running at ${src.camFps} fps.`
       : ` \u00b7 This browser only gave ${src.camFps} fps, so fast balls will read less accurately.`;
+    info += ' ' + frameRateNote(src.camFps, settings.L);
   }
   $('calInfo').textContent = info;
+}
+
+/** Under the picture: the clip's frame rate, in real time, and what it means for speed. */
+function showClipRate(src) {
+  const slow = Math.max(1, settings.slowmo), real = src.clipFps * slow;
+  const what = slow > 1 ? `Clip ${Math.round(src.clipFps)} fps, slowed ${slow}\u00d7: ${Math.round(real)} fps in real time.` : `Clip ${Math.round(real)} fps.`;
+  const base = ($('calInfo').textContent || '').split(' \u00b7 Clip ')[0];
+  $('calInfo').textContent = `${base} \u00b7 ${what} ${frameRateNote(real, settings.L)}`;
 }
 
 function canvasPos(e) {
@@ -802,8 +829,73 @@ function captureBatterEnd(t) {
   if (!video.videoWidth) return;
   crops.capture(video, batterRect(), t);
 }
-/** After a delivery: follow the ball into the batter with the detector, for the "reached bat" moment. */
+/** After a delivery: the "reached bat" moment, from the picture and then (if switched on) the sound. */
 async function refineWithDetector(ball) {
+  await refineByPicture(ball);
+  await refineBySound(ball);
+}
+/**
+ * Experimental: the bat's click in a clip's sound pins the contact to well under a millisecond.
+ * Clips only (their sound and picture share one clock), and not slowed slo-mo clips.
+ */
+async function refineBySound(ball) {
+  const src = S.source;
+  if (settings.sound !== 'on' || !src || src.kind !== 'file' || !src.file || settings.slowmo > 1 || !ball.cam) return;
+  try {
+    if (!src.audio) src.audio = decodeClipAudio(src.file);
+    const audio = await src.audio;
+    if (!audio) { ball.soundNote = 'no sound in this clip'; return; }
+    const cam = makeCam(ball.cam.f, ball.cam.cx, ball.cam.cy, ball.cam.R, ball.cam.t);
+    const P = [0, CONTACT_AHEAD, 0.6], dist = Math.hypot(cam.C[0] - P[0], cam.C[1] - P[1], cam.C[2] - P[2]);
+    const r = soundContact(audio, ball.marks.arrive, dist);
+    if (!r) { ball.soundNote = 'no clear bat click'; return; }
+    ball.marks.arrive = r.t;
+    ball.arriveBy = 'sound';
+    applyMarks(ball);
+  } catch (e) { ball.soundNote = 'sound could not be read'; }
+}
+// ---------------------------------------------------------------- training frames
+// For training a cricket-ball detector (MODEL.md): the sharp crops of the batter's end the
+// detector looks at, with the ball marked where the tracker placed it. The marks are a head
+// start for labelling, not the truth: every frame needs checking by eye.
+const MAX_TRAINING = 600, BALL_DIAMETER = 0.072;
+S.training = [];
+function collectTraining(ball, frames, start, pts, cam, s) {
+  const known = [start, ...pts];
+  const tEnd = (pts.contact != null ? pts.contact : known[known.length - 1].t) + 0.1;
+  const P = [0, CONTACT_AHEAD, 0.6], dist = Math.hypot(cam.C[0] - P[0], cam.C[1] - P[1], cam.C[2] - P[2]);
+  const ballView = cam.f * BALL_DIAMETER / dist;           // the ball's size near the batter, in working-frame pixels
+  for (const f of frames) {
+    if (f.t > tEnd || S.training.length >= MAX_TRAINING) break;
+    const r = f.rect, sc = 640 / r.w, p = known.find((q) => Math.abs(q.t - f.t) < 0.002);
+    let label = '', x = null, y = null;
+    if (p) {
+      const px = (p.u * s - r.x) * sc, py = (p.v * s - r.y) * sc;
+      if (px >= 0 && px < 640 && py >= 0 && py < 640) { x = px; y = py; label = yoloLabel(x, y, Math.max(6, ballView * s * sc), 640); }
+    }
+    S.training.push({ b: f.b, label, x, y, ball: String(ball.at), name: `${ball.at}-${String(Math.round(f.t * 1000)).padStart(7, '0')}` });
+  }
+  updateTrainingButton();
+}
+function updateTrainingButton() {
+  const b = $('exportTrain');
+  if (!b) return;
+  b.disabled = !S.training.length;
+  b.textContent = `Export (${S.training.length})`;
+}
+async function exportTraining() {
+  if (!S.training.length) return;
+  const samples = [];
+  for (const t of S.training) samples.push({ ...t, bytes: new Uint8Array(await t.b.arrayBuffer()) });
+  const blob = new Blob([makeZip(trainingFiles(samples))], { type: 'application/zip' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = `ball-frames-${new Date().toISOString().slice(0, 10)}.zip`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+
+/** Follow the ball into the batter with the detector, for the "reached bat" moment. */
+async function refineByPicture(ball) {
   const last = ball.obs[ball.obs.length - 1], start = { t: last[0], u: last[1], v: last[2] };
   const frames = await crops.between(start.t - 0.02, start.t + 0.7);
   if (!frames.length) { ball.arriveBy = 'motion'; return; }
@@ -815,9 +907,10 @@ async function refineWithDetector(ball) {
     const cam = makeCam(ball.cam.f, ball.cam.cx, ball.cam.cy, ball.cam.R, ball.cam.t);
     const near = pitchRegion(cam, -1.5, Math.min(ball.L * 0.6, 12), { halfWidth: 1.8, top: 2.6 });
     const pts = await followToBatter(frames, start, toView, null, near);
+    if (settings.collect === 'on') collectTraining(ball, frames, start, pts, cam, s);
     if (pts.length) {
       ball.obs.push(...pts.map((p) => [+p.t.toFixed(4), Math.round(p.u), Math.round(p.v)]));
-      ball.marks.arrive = pts[pts.length - 1].t;
+      ball.marks.arrive = pts.contact != null ? pts.contact : pts[pts.length - 1].t;   // between frames when it could be worked out
       ball.arriveBy = 'detector';
       applyMarks(ball);
     } else ball.arriveBy = 'motion';
@@ -876,7 +969,11 @@ function onClipEnd() {
   S.status = 'Clip finished';
   const had = S.session && S.session.balls.length;
   endSession(true).then(() => {
-    if (!had) { $('calInfo').textContent = 'Clip finished. No delivery was picked up; check the calibration markers and try again.'; }
+    if (!had) {
+      const src = S.source, maybeSlowmo = src && src.clipFps && src.clipFps < 35 && settings.slowmo <= 1;
+      $('calInfo').textContent = 'Clip finished. No delivery was picked up; check the calibration markers and try again.'
+        + (maybeSlowmo ? ' If this is an iPhone slo-mo clip, set its slow-motion factor in Setup (240 fps shown at 30 = 8): unslowed, the ball looks too slow to be bowled.' : '');
+    }
   });
   updatePill();
 }
@@ -1170,6 +1267,10 @@ bind('sUnits', 'units', String, () => { renderResult(); renderSession(); });
 bind('sSens', 'sens', (v) => Math.min(150, Math.max(15, +v)));
 bind('sProc', 'procW', (v) => +v);
 bind('sSlow', 'slowmo', (v) => Math.min(32, Math.max(1, +v)));
+bind('sSound', 'sound', String);
+bind('sCollect', 'collect', String, updateTrainingButton);
+$('exportTrain').addEventListener('click', () => { exportTraining().catch(() => {}); });
+updateTrainingButton();
 
 window.addEventListener('resize', () => { big.draw(); mini.draw(); renderMaps(); });
 document.addEventListener('visibilitychange', () => {
