@@ -207,14 +207,16 @@ export async function followToBatter(frames, start, toView, onProgress, allowed 
  */
 export async function confirmBall(path, ring, toCrop, n = 5) {
   const WIN = 240, R = 26;
-  const pts = path.length > 6 ? path.slice(1) : path;
+  // A busy phone skips some crops: look only at points with a crop kept within about a frame of
+  // them, spread along the path.
+  const pts = (path.length > 6 ? path.slice(1) : path).filter((p) => ring.at(p.t, 0.02));
   const pick = pts.length <= n ? pts : Array.from({ length: n }, (_, j) => pts[Math.round(j * (pts.length - 1) / (n - 1))]);
   const win = document.createElement('canvas');
   win.width = win.height = WIN;
   const wctx2 = win.getContext('2d');
   let checked = 0, hits = 0;
   for (const p of pick) {
-    const f = ring.at(p.t);
+    const f = ring.at(p.t, 0.02);
     if (!f) continue;
     const c = toCrop(f.rect, p.u, p.v);
     if (c.x < 0 || c.y < 0 || c.x >= SIZE || c.y >= SIZE) continue;

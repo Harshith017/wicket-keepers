@@ -11,7 +11,7 @@
 // Works on any { width, height, data } RGBA image. Coordinates returned are in
 // that image's pixels.
 
-function bars(img, x0, x1, y0, y1, maxHalfWidth) {
+function bars(img, x0, x1, y0, y1, maxHalfWidth, lighter = false) {
   const { width: W, data: d } = img;
   const w = x1 - x0, h = y1 - y0, R = new Float32Array(w * h);
   const px = (x, y) => { const i = (y * W + x) * 4; return [d[i], d[i + 1], d[i + 2]]; };
@@ -22,6 +22,8 @@ function bars(img, x0, x1, y0, y1, maxHalfWidth) {
     for (let k = 2; k <= maxHalfWidth + 1; k++) {
       const l = px(x - k, y), r = px(x + k, y);
       // differs from both sides, and the two sides look alike (a bar, not an edge)
+      // stumps far away are pale wood against a darker backdrop: lighter than both sides
+      if (lighter && (c[0] + c[1] + c[2]) < Math.max(l[0] + l[1] + l[2], r[0] + r[1] + r[2]) + 30) continue;
       const m = Math.min(diff(c, l), diff(c, r)) - 0.5 * diff(l, r);
       if (m > best) best = m;
     }
@@ -92,22 +94,36 @@ export function findNearStump(img, near) {
 export function findFarStumps(img, nearStump, guess) {
   const W = img.width, H = img.height;
   const cx = guess ? guess[0] : nearStump.x;
-  const x0 = Math.max(0, Math.round(cx - 0.1 * W)), x1 = Math.min(W, Math.round(cx + 0.1 * W));
+  // the phone is not always straight behind your stump: look well to either side (sets of stumps,
+  // below, tell the batter's stumps from net strings and poles in the wider strip)
+  const half = guess ? 0.1 * W : 0.15 * W;
+  const x0 = Math.max(0, Math.round(cx - half)), x1 = Math.min(W, Math.round(cx + half));
   const y0 = guess ? Math.max(0, Math.round(guess[1] - 0.08 * H)) : Math.round(0.3 * H);
   const y1 = guess ? Math.min(H, Math.round(guess[1] + 0.08 * H)) : Math.max(y0 + 10, Math.min(nearStump.top - 4, Math.round(0.75 * H)));
-  const map = bars(img, x0, x1, y0, y1, 2);
+  const map = bars(img, x0, x1, y0, y1, 2, true);
+  // stumps far away are a few dozen pixels tall at most, and stand straight up
+  const cands = runs(map, 45, 2).filter((r) => r.len >= 0.012 * H && r.len <= 0.06 * H);
+  // A set of stumps is two or three such bars side by side, tops and bottoms level; a pale strip of
+  // net or a pole is one. Group each bar with its neighbours and count the separate bars.
+  const span = Math.max(6, Math.round(0.03 * W));
   let best = null;
-  for (const r of runs(map, 45, 2)) {
-    // stumps far away are a few dozen pixels tall at most, and stand straight up
-    if (r.len < 0.012 * H || r.len > 0.06 * H) continue;
-    const near = guess ? Math.hypot(r.x - guess[0], r.bottom - guess[1]) : Math.abs(r.x - cx);
-    // the batter's stumps stand on the pitch: the lowest such bar (walls and nets are higher up)
-    const score = guess ? r.len - 0.5 * near : r.bottom - 1.0 * near;
-    if (!best || score > best.score) best = { ...r, score };
+  for (const r of cands) {
+    const mates = cands.filter((q) => Math.abs(q.x - r.x) <= span && Math.abs(q.bottom - r.bottom) <= 6 && Math.abs(q.top - r.top) <= 8);
+    const xs = [...new Set(mates.map((q) => q.x))].sort((a, b) => a - b);
+    let count = xs.length ? 1 : 0;
+    for (let i = 1; i < xs.length; i++) if (xs[i] - xs[i - 1] >= 3) count++;      // one stump shows in two or three columns
+    const sets = Math.min(3, count);
+    const near = guess ? Math.hypot(r.x - guess[0], r.bottom - guess[1]) : 0.3 * Math.abs(r.x - cx);
+    // the batter's stumps stand on the pitch: the lowest such set (walls and nets are higher up)
+    const base = guess ? r.len - 0.5 * near : r.bottom - 1.0 * near;
+    const score = base + 30 * (sets - 1);
+    if (!best || score > best.score) best = { mates, score };
   }
-  // gather the neighbouring stumps of the same set, for a steadier base and top
   if (!best) return null;
-  return { x: best.x, top: best.top, base: best.bottom + 1 };
+  // the set's middle, and its steadiest top and base
+  const med = (a) => { const b = a.slice().sort((p, q) => p - q); return b[b.length >> 1]; };
+  const m = best.mates;
+  return { x: Math.round(m.reduce((s, q) => s + q.x, 0) / m.length), top: med(m.map((q) => q.top)), base: med(m.map((q) => q.bottom)) + 1 };
 }
 
 /** Both sets: { near: { x, base }, far: { x, base, top } } or null. Optional rough taps guide the search. */
