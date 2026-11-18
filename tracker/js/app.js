@@ -2,7 +2,8 @@ import { calibrate, calibrateFromTaps, project, makeCam, groundPoint } from './g
 import { MapView } from './maps.js';
 import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack, CREASE, STUMP_H } from './physics.js';
 import { FrameRing, Player } from './clips.js';
-import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote } from './bowling.js';
+import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote, CONTACT_AHEAD } from './bowling.js';
+import { decodeClipAudio, soundContact } from './sound.js';
 import { CropRing, followToBatter, loadDetector } from './ml.js';
 import { findStumps, findNearStump, findFarStumps } from './stumps.js';
 import { putSession, allSessions, putClip, getClip, deleteSession } from './store.js';
@@ -17,7 +18,7 @@ const MAX_VIEW = 1280;           // frames are worked on at up to this many pixe
 
 // ---------------------------------------------------------------- state
 const saved = (() => { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) { return {}; } })();
-const settings = Object.assign({ L: 20.12, rectW: 3.05, units: 'kmh', sens: 45, procW: 960, slowmo: 1, calMode: 'quick', camH: 150 }, saved.settings);
+const settings = Object.assign({ L: 20.12, rectW: 3.05, units: 'kmh', sens: 45, procW: 960, slowmo: 1, calMode: 'quick', camH: 150, sound: 'off' }, saved.settings);
 if (settings.calMode === 'stumps') settings.calMode = 'quick';      // the old stump mode became the quick setup
 const F = {                                   // field state, shared by both field views
   L: settings.L, boundary: saved.boundary || 65, hand: saved.hand || 'R',
@@ -79,6 +80,7 @@ class VideoSource {
       video.srcObject = this.stream; video.loop = false;
     } else {
       this.url = URL.createObjectURL(file);
+      this.file = file; this.audio = null;
       video.srcObject = null; video.loop = false;
       video.muted = true; video.playsInline = true; video.preload = 'auto';
       // iPhone Safari only reports the clip's size until it is played, so wait for
@@ -825,8 +827,33 @@ function captureBatterEnd(t) {
   if (!video.videoWidth) return;
   crops.capture(video, batterRect(), t);
 }
-/** After a delivery: follow the ball into the batter with the detector, for the "reached bat" moment. */
+/** After a delivery: the "reached bat" moment, from the picture and then (if switched on) the sound. */
 async function refineWithDetector(ball) {
+  await refineByPicture(ball);
+  await refineBySound(ball);
+}
+/**
+ * Experimental: the bat's click in a clip's sound pins the contact to well under a millisecond.
+ * Clips only (their sound and picture share one clock), and not slowed slo-mo clips.
+ */
+async function refineBySound(ball) {
+  const src = S.source;
+  if (settings.sound !== 'on' || !src || src.kind !== 'file' || !src.file || settings.slowmo > 1 || !ball.cam) return;
+  try {
+    if (!src.audio) src.audio = decodeClipAudio(src.file);
+    const audio = await src.audio;
+    if (!audio) { ball.soundNote = 'no sound in this clip'; return; }
+    const cam = makeCam(ball.cam.f, ball.cam.cx, ball.cam.cy, ball.cam.R, ball.cam.t);
+    const P = [0, CONTACT_AHEAD, 0.6], dist = Math.hypot(cam.C[0] - P[0], cam.C[1] - P[1], cam.C[2] - P[2]);
+    const r = soundContact(audio, ball.marks.arrive, dist);
+    if (!r) { ball.soundNote = 'no clear bat click'; return; }
+    ball.marks.arrive = r.t;
+    ball.arriveBy = 'sound';
+    applyMarks(ball);
+  } catch (e) { ball.soundNote = 'sound could not be read'; }
+}
+/** Follow the ball into the batter with the detector, for the "reached bat" moment. */
+async function refineByPicture(ball) {
   const last = ball.obs[ball.obs.length - 1], start = { t: last[0], u: last[1], v: last[2] };
   const frames = await crops.between(start.t - 0.02, start.t + 0.7);
   if (!frames.length) { ball.arriveBy = 'motion'; return; }
@@ -1197,6 +1224,7 @@ bind('sUnits', 'units', String, () => { renderResult(); renderSession(); });
 bind('sSens', 'sens', (v) => Math.min(150, Math.max(15, +v)));
 bind('sProc', 'procW', (v) => +v);
 bind('sSlow', 'slowmo', (v) => Math.min(32, Math.max(1, +v)));
+bind('sSound', 'sound', String);
 
 window.addEventListener('resize', () => { big.draw(); mini.draw(); renderMaps(); });
 document.addEventListener('visibilitychange', () => {
