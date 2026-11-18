@@ -1,81 +1,145 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
+    "accessibility": {
+      "source": "affaan-m/ECC",
+      "commit": "3f14a103a8694e51c1df9a806217a6d0b5f7a6f7",
+      "sourceType": "github",
+      "skillPath": "skills/accessibility/SKILL.md",
+      "computedHash": "27e00a84ec716335fe622e40e8d53b6c3216b819af1fc1ef22030ed4cb570ecb",
+      "installMode": "copy"
+    },
+    "browser-qa": {
+      "source": "affaan-m/ECC",
+      "commit": "3f14a103a8694e51c1df9a806217a6d0b5f7a6f7",
+      "sourceType": "github",
+      "skillPath": "skills/browser-qa/SKILL.md",
+      "computedHash": "0d853f8cd9eb310a933e7fc460c3c399e343a0894c03d9ac60c971e3a6b6f9aa",
+      "installMode": "copy"
+    },
     "chief-of-staff": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/in-progress/chief-of-staff/SKILL.md",
-      "computedHash": "8a5ccad808e4f6158380720907f0af3a96bbee98cc5aa721053acd97fa72ce4b",
+      "computedHash": "",
       "installMode": "copy"
     },
     "design-taste-frontend": {
       "source": "Leonxlnx/taste-skill",
       "sourceType": "github",
       "skillPath": "skills/taste-skill/SKILL.md",
-      "computedHash": "23b3930015c478034b222e1a015da03a962c8ab48aee9fb4f3f69d977034feaa",
+      "computedHash": "",
+      "installMode": "copy"
+    },
+    "e2e-testing": {
+      "source": "affaan-m/ECC",
+      "commit": "3f14a103a8694e51c1df9a806217a6d0b5f7a6f7",
+      "sourceType": "github",
+      "skillPath": "skills/e2e-testing/SKILL.md",
+      "computedHash": "8fcd852826a2486c8f09f9493e0536adc505ccd641b70841e74915ce2f1ffb41",
+      "installMode": "copy"
+    },
+    "error-handling": {
+      "source": "affaan-m/ECC",
+      "commit": "3f14a103a8694e51c1df9a806217a6d0b5f7a6f7",
+      "sourceType": "github",
+      "skillPath": "skills/error-handling/SKILL.md",
+      "computedHash": "cdb6b94c8881575d91e49c9969f3dfc853c1739b6220923da27265f3a1e0e929",
+      "installMode": "copy"
+    },
+    "frontend-a11y": {
+      "source": "affaan-m/ECC",
+      "commit": "3f14a103a8694e51c1df9a806217a6d0b5f7a6f7",
+      "sourceType": "github",
+      "skillPath": "skills/frontend-a11y/SKILL.md",
+      "computedHash": "a75b4ef44b6b14f0eef8e48238f6e8e15c44cf3d329bf517e6bbc471de74efd2",
+      "installMode": "copy"
+    },
+    "frontend-patterns": {
+      "source": "affaan-m/ECC",
+      "commit": "3f14a103a8694e51c1df9a806217a6d0b5f7a6f7",
+      "sourceType": "github",
+      "skillPath": "skills/frontend-patterns/SKILL.md",
+      "computedHash": "3c9ff06bd5ac5684fcaa83376dd544a116685c67e8bf6694d4fb1772488c161c",
       "installMode": "copy"
     },
     "hallmark": {
       "source": "Nutlope/hallmark",
       "sourceType": "github",
       "skillPath": "skills/hallmark/SKILL.md",
-      "computedHash": "1465546d7971f57d428a0cbccfe0fa0426d1c309bec28ceefeb70e76f38c640e",
+      "computedHash": "",
       "installMode": "copy"
     },
     "implement-spec": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/implement-spec/SKILL.md",
-      "computedHash": "0ccc13c6766b0e5f55229c8f1252d004090da70e6610b4c324cd245970fcb3f1",
+      "computedHash": "",
       "installMode": "copy"
     },
     "retro": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/retro/SKILL.md",
-      "computedHash": "b8d55851a2909e26c2dbb2e8563719c87b3b700559f604e4df344f8c27e21047",
+      "computedHash": "",
       "installMode": "copy"
     },
     "security-audit": {
       "source": "cloudflare/security-audit-skill",
       "sourceType": "github",
       "skillPath": "skills/security-audit/SKILL.md",
-      "computedHash": "98b97aad2873b3b9a8e064007c25e7827b493ba27fda8bfbdb41dab586767973",
+      "computedHash": "",
+      "installMode": "copy"
+    },
+    "seo": {
+      "source": "affaan-m/ECC",
+      "commit": "3f14a103a8694e51c1df9a806217a6d0b5f7a6f7",
+      "sourceType": "github",
+      "skillPath": "skills/seo/SKILL.md",
+      "computedHash": "d3ab36bacbd4631faeff5d5e6d1ab3ca93fb9af33303fc25528ff650d842b1d0",
       "installMode": "copy"
     },
     "setup-matt-pocock-skills": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/setup-matt-pocock-skills/SKILL.md",
-      "computedHash": "50d6c45174f56a4323b24978f36fcc9169fae0b3abb026587bf636e468c4954c",
+      "computedHash": "",
       "installMode": "copy"
     },
     "tdd": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/tdd/SKILL.md",
-      "computedHash": "daf55026f456af104a72fa43247f7bcec89e5127316dc5b1b8d675d6a9d8ce94",
+      "computedHash": "",
       "installMode": "copy"
     },
     "to-spec": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/to-spec/SKILL.md",
-      "computedHash": "3fa1a0695d4ea242fae9e569e4d22aa1788623197abb33bfadafae7315789bbf",
+      "computedHash": "",
       "installMode": "copy"
     },
     "to-tickets": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/engineering/to-tickets/SKILL.md",
-      "computedHash": "5f871bdc46a9212222214ba399be4965374208af1bd7f48f1271bef72841dd31",
+      "computedHash": "",
+      "installMode": "copy"
+    },
+    "web-perimeter-owasp-2025-audit": {
+      "source": "affaan-m/ECC",
+      "commit": "3f14a103a8694e51c1df9a806217a6d0b5f7a6f7",
+      "sourceType": "github",
+      "skillPath": "skills/web-perimeter-owasp-2025-audit/SKILL.md",
+      "computedHash": "514efb1050557333e3b2e292472ab555bccd2c684b9f530c000a4db7ff0dc16a",
       "installMode": "copy"
     },
     "writing-for-agents": {
       "source": "mattpocock/skills",
       "sourceType": "github",
       "skillPath": "skills/productivity/writing-for-agents/SKILL.md",
-      "computedHash": "95da47fc97af998e85b7d7e6d57b3ac76727c1e290cfe9ea09005aacb826959f",
+      "computedHash": "",
       "installMode": "copy"
     }
   }
