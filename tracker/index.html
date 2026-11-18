@@ -150,6 +150,14 @@
   nav.tabs button.on{color:var(--ink);background:var(--raised);}
   nav.tabs svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;}
   .calpanel{margin:12px 0 0;}
+  .steps{margin:0 0 12px;padding:14px;border-radius:12px;background:var(--raised);}
+  .stepbar{display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--ink-3);}
+  .stepbar .dots{display:flex;gap:6px;}
+  .stepbar .dots i{width:8px;height:8px;border-radius:50%;background:var(--hair-strong);}
+  .stepbar .dots i.on{background:var(--accent);}
+  .steptitle{font-size:17px;font-weight:600;margin-top:6px;}
+  .nudges{gap:6px;flex-wrap:wrap;}
+  .nudge{min-width:44px;padding:0 10px;font-size:18px;}
   .num-in{width:88px;height:36px;padding:0 10px;border-radius:8px;border:1px solid var(--hair-strong);background:var(--card);}
   .list{margin-top:8px;border-top:1px solid var(--hair);}
   .list button{display:flex;width:100%;align-items:center;gap:12px;text-align:left;border:none;background:none;padding:12px 0;border-bottom:1px solid var(--hair);cursor:pointer;font-size:14px;line-height:20px;}
@@ -202,6 +210,20 @@
         <div class="pill" id="pill" hidden><i class="dot" id="pillDot"></i><span id="pillTxt"></span></div>
       </div>
 
+      <div class="steps" id="calSteps" hidden>
+          <div class="stepbar"><span id="stepNum">Step 1 of 3</span><span class="dots" id="stepDots"><i></i><i></i><i></i></span></div>
+          <div class="steptitle" id="stepTitle"></div>
+          <p class="muted" id="stepHint" style="margin:4px 0 0">Slide a finger anywhere on the picture. The cross moves slowly, so you can put it exactly on the spot. Use the arrows for the last pixel.</p>
+          <div class="row nudges" style="margin-top:12px">
+            <button class="btn nudge" data-n="-1,0" aria-label="Left">&larr;</button>
+            <button class="btn nudge" data-n="0,-1" aria-label="Up">&uarr;</button>
+            <button class="btn nudge" data-n="0,1" aria-label="Down">&darr;</button>
+            <button class="btn nudge" data-n="1,0" aria-label="Right">&rarr;</button>
+            <span class="grow"></span>
+            <button class="btn" id="stepBack">Back</button>
+            <button class="btn primary" id="stepNext">Next</button>
+          </div>
+        </div>
       <div class="row">
         <button class="btn primary" id="sessBtn" disabled>Start session</button>
         <button class="btn" id="calBtn" disabled>Calibrate pitch</button>
