@@ -4,7 +4,8 @@ import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack,
 import { FrameRing, Player } from './clips.js';
 import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote, CONTACT_AHEAD } from './bowling.js';
 import { decodeClipAudio, soundContact } from './sound.js';
-import { yoloLabel, trainingFiles } from './detections.js';
+import { yoloLabel, trainingFiles, pickForUpload } from './detections.js';
+import { signIn, signOut, signedInEmail, sendFrames } from './pipeline.js';
 import { makeZip } from './zip.js';
 import { CropRing, followToBatter, loadDetector } from './ml.js';
 import { findStumps, findNearStump, findFarStumps } from './stumps.js';
@@ -20,7 +21,7 @@ const MAX_VIEW = 1280;           // frames are worked on at up to this many pixe
 
 // ---------------------------------------------------------------- state
 const saved = (() => { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch (e) { return {}; } })();
-const settings = Object.assign({ L: 20.12, rectW: 3.05, units: 'kmh', sens: 45, procW: 960, slowmo: 1, calMode: 'quick', camH: 150, sound: 'off', collect: 'off' }, saved.settings);
+const settings = Object.assign({ L: 20.12, rectW: 3.05, units: 'kmh', sens: 45, procW: 960, slowmo: 1, calMode: 'quick', camH: 150, sound: 'off', collect: 'off', autoSend: 'off' }, saved.settings);
 if (settings.calMode === 'stumps') settings.calMode = 'quick';      // the old stump mode became the quick setup
 const F = {                                   // field state, shared by both field views
   L: settings.L, boundary: saved.boundary || 65, hand: saved.hand || 'R',
@@ -865,6 +866,7 @@ function collectTraining(ball, frames, start, pts, cam, s) {
   const tEnd = (pts.contact != null ? pts.contact : known[known.length - 1].t) + 0.1;
   const P = [0, CONTACT_AHEAD, 0.6], dist = Math.hypot(cam.C[0] - P[0], cam.C[1] - P[1], cam.C[2] - P[2]);
   const ballView = cam.f * BALL_DIAMETER / dist;           // the ball's size near the batter, in working-frame pixels
+  const mine = [];
   for (const f of frames) {
     if (f.t > tEnd || S.training.length >= MAX_TRAINING) break;
     const r = f.rect, sc = 640 / r.w, p = known.find((q) => Math.abs(q.t - f.t) < 0.002);
@@ -873,9 +875,36 @@ function collectTraining(ball, frames, start, pts, cam, s) {
       const px = (p.u * s - r.x) * sc, py = (p.v * s - r.y) * sc;
       if (px >= 0 && px < 640 && py >= 0 && py < 640) { x = px; y = py; label = yoloLabel(x, y, Math.max(6, ballView * s * sc), 640); }
     }
-    S.training.push({ b: f.b, label, x, y, ball: String(ball.at), name: `${ball.at}-${String(Math.round(f.t * 1000)).padStart(7, '0')}` });
+    const sample = { b: f.b, label, x, y, ball: String(ball.at), name: `${ball.at}-${String(Math.round(f.t * 1000)).padStart(7, '0')}`,
+      score: p && p.score != null ? p.score : null, by: p ? (p === start ? 'motion' : 'detector') : 'none' };
+    S.training.push(sample); mine.push(sample);
   }
   updateTrainingButton();
+  if (settings.autoSend === 'on') autoSend(mine);
+}
+// Sending frames to the training pipeline (Firebase, then a weekly move to Roboflow).
+S.sent = 0; S.sendNote = '';
+async function autoSend(samples) {
+  const pick = pickForUpload(samples);
+  if (!pick.length) return;
+  try {
+    S.sent += await sendFrames(pick);
+    S.sendNote = '';
+  } catch (e) {
+    S.sendNote = e.message === 'not-approved' ? 'This account is not approved in Wicket Keepers, so frames are not sent.'
+      : e.message === 'not-signed-in' ? 'Signed out: sign in again to keep sending frames.' : 'Could not send frames (offline?).';
+  }
+  updateSendInfo();
+}
+async function updateSendInfo() {
+  const el = $('sendInfo'), btn = $('sendSignIn');
+  if (!el || !btn) return;
+  if (settings.autoSend !== 'on') { el.textContent = 'off'; btn.textContent = 'Sign in'; btn.hidden = true; return; }
+  btn.hidden = false;
+  let who = null;
+  try { who = await signedInEmail(); } catch (e) { el.textContent = 'Could not reach the training pipeline (offline?).'; return; }
+  btn.textContent = who ? 'Sign out' : 'Sign in';
+  el.textContent = who ? `as ${who} \u00b7 ${S.sent} sent this visit${S.sendNote ? ' \u00b7 ' + S.sendNote : ''}` : 'sign in with your Wicket Keepers Google account';
 }
 function updateTrainingButton() {
   const b = $('exportTrain');
@@ -1269,6 +1298,17 @@ bind('sProc', 'procW', (v) => +v);
 bind('sSlow', 'slowmo', (v) => Math.min(32, Math.max(1, +v)));
 bind('sSound', 'sound', String);
 bind('sCollect', 'collect', String, updateTrainingButton);
+bind('sAutoSend', 'autoSend', String, () => {
+  if (settings.autoSend === 'on' && settings.collect !== 'on') { settings.collect = 'on'; $('sCollect').value = 'on'; save(); }
+  updateSendInfo();
+});
+$('sendSignIn').addEventListener('click', async () => {
+  try {
+    if ((await signedInEmail())) await signOut(); else await signIn();
+  } catch (e) { S.sendNote = 'Sign-in did not finish.'; }
+  updateSendInfo();
+});
+updateSendInfo();
 $('exportTrain').addEventListener('click', () => { exportTraining().catch(() => {}); });
 updateTrainingButton();
 

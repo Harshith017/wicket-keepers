@@ -345,6 +345,8 @@
           <label for="sSound">Bat click timing (experimental)<small>clips only: times the contact from the bat's click in the clip's sound, not the nearest frame. Needs a quiet net; not for slowed slo-mo clips</small></label><select id="sSound"><option value="off">Off</option><option value="on">On</option></select>
           <label for="sCollect">Collect training frames<small>keeps the detector's view of the batter's end for each ball (up to 600 frames, this visit only), to train a cricket-ball detector</small></label><select id="sCollect"><option value="off">Off</option><option value="on">On</option></select>
           <label class="grow">Training frames<small>a zip of the frames with the ball marked, for a labelling tool</small></label><button class="btn" id="exportTrain" disabled>Export (0)</button>
+          <label for="sAutoSend">Send frames automatically<small>sends the frames the detector was sure of to the weekly training pipeline (MODEL.md), so nothing needs exporting. Needs a Wicket Keepers account the organiser approved</small></label><select id="sAutoSend"><option value="off">Off</option><option value="on">On</option></select>
+          <label class="grow">Training pipeline<small id="sendInfo">off</small></label><button class="btn" id="sendSignIn" hidden>Sign in</button>
         </div>
       </div>
       <div class="card">
