@@ -193,10 +193,13 @@ export function deliveryStart(obs, cam, L, minSize = 0, loose = false) {
 export function trimAtBatter(obs, cam) {
   if (!cam || obs.length < 8) return obs;
   const W = 2 * cam.cx, q = project(cam, [0, CONTACT_AHEAD, 0.4]);
+  // the first time it gets there: once close to the batter, the ball moving clearly away again is
+  // the shot (a later pass near the batter, on the way back, is not the contact)
   let k = 0, best = Infinity;
   for (let i = 0; i < obs.length; i++) {
     const d = Math.hypot(obs[i].u - q[0], obs[i].v - q[1]);
     if (d < best) { best = d; k = i; }
+    else if (best < 0.25 * W && d > best + 0.06 * W) break;
   }
   if (k < 5 || k >= obs.length - 2) return obs;
   const back = Math.max(...obs.slice(k + 1).map((o) => Math.hypot(o.u - q[0], o.v - q[1])));
@@ -272,4 +275,31 @@ export function reachesBatter(last, cam) {
   if (!cam) return true;
   const q = project(cam, [0, 0.5, 0.3]);
   return Math.hypot(last.u - q[0], last.v - q[1]) < 0.2 * 2 * cam.cx;
+}
+
+/**
+ * A test for the moving things the tracker should look at, from the calibrated camera:
+ * (b) => bool for a blob { x, y, n, bw, bh } in working-frame pixels (n and bw/bh in detector
+ * pixels, `procScale` = detector width / working width).
+ *  - Only what is over this pitch: from behind the batter's stumps to behind the bowler's, a
+ *    little wider than the pitch, up to above head height. Balls, bats and people in the next
+ *    nets are ignored before they are tracked.
+ *  - Near the batter, only something ball-sized and roughly round: the bat (long and thin) and
+ *    the batter's body (big) are not taken for the ball.
+ */
+export function ballCandidateFilter(cam, L, procScale = 1) {
+  if (!cam) return () => true;
+  const W = 2 * cam.cx;
+  const lane = pitchRegion(cam, -1.5, L + 1.5, { halfWidth: 1.9, top: 3.2, margin: 0.02 * W });
+  const q = project(cam, [0, 0.5, 0.8]);
+  const dist = Math.hypot(cam.C[0], cam.C[1] - 0.5, cam.C[2] - 0.8);
+  const ballPx = cam.f * 0.072 / dist * procScale;                     // ball across, in detector pixels, at the batter
+  const maxN = Math.max(60, 8 * ballPx * ballPx);                       // motion blur and a little of the bat or glove
+  const zone = 0.14 * W;
+  return (b) => {
+    if (!lane(b.x, b.y)) return false;
+    if (Math.hypot(b.x - q[0], b.y - q[1]) > zone) return true;
+    const long = Math.max(b.bw || 0, b.bh || 0), short = Math.max(1, Math.min(b.bw || 0, b.bh || 0));
+    return !(b.n > maxN || long > 3 * short);
+  };
 }
