@@ -193,10 +193,13 @@ export function deliveryStart(obs, cam, L, minSize = 0, loose = false) {
 export function trimAtBatter(obs, cam) {
   if (!cam || obs.length < 8) return obs;
   const W = 2 * cam.cx, q = project(cam, [0, CONTACT_AHEAD, 0.4]);
+  // the first time it gets there: once close to the batter, the ball moving clearly away again is
+  // the shot (a later pass near the batter, on the way back, is not the contact)
   let k = 0, best = Infinity;
   for (let i = 0; i < obs.length; i++) {
     const d = Math.hypot(obs[i].u - q[0], obs[i].v - q[1]);
     if (d < best) { best = d; k = i; }
+    else if (best < 0.25 * W && d > best + 0.06 * W) break;
   }
   if (k < 5 || k >= obs.length - 2) return obs;
   const back = Math.max(...obs.slice(k + 1).map((o) => Math.hypot(o.u - q[0], o.v - q[1])));
