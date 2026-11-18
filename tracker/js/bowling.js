@@ -154,7 +154,7 @@ export function deliveryStart(obs, cam, L, minSize = 0) {
   // flight (the bowler's body often hides it for a moment, and the release height varies), at
   // the heights a bowled ball has there.
   const hand = [];
-  for (const ahead of [0, 1, 2, 3]) for (const [x, z] of [[0, 2.0], [0, 2.5], [0.8, 2.2], [-0.8, 2.2], [0, 1.6]]) {
+  for (const ahead of [0, 1]) for (const [x, z] of [[0, 2.0], [0, 2.5], [0.8, 2.2], [-0.8, 2.2], [0, 1.6]]) {
     const p = project(cam, [x, L - RELEASE_AHEAD - ahead, z - 0.12 * ahead]);
     if (p[2] > 0.05) hand.push(p);
   }
