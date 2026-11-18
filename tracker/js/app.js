@@ -7,7 +7,7 @@ import { decodeClipAudio, soundContact } from './sound.js';
 import { yoloLabel, trainingFiles, pickForUpload } from './detections.js';
 import { signIn, signOut, signedInEmail, sendFrames } from './pipeline.js';
 import { makeZip } from './zip.js';
-import { CropRing, followToBatter, loadDetector } from './ml.js';
+import { CropRing, followToBatter, loadDetector, confirmBall } from './ml.js';
 import { findStumps, findNearStump, findFarStumps } from './stumps.js';
 import { putSession, allSessions, putClip, getClip, deleteSession } from './store.js';
 import { Detector, Tracker } from './detector.js';
@@ -46,6 +46,7 @@ function save() {
 }
 
 const detector = new Detector(), tracker = new Tracker(), ring = new FrameRing(), crops = new CropRing();
+const flight = new CropRing(3);      // sharp crops of where the ball flies, to check a path is a ball
 const curBalls = () => (S.session ? S.session.balls : []);
 const view = $('view'), vctx = view.getContext('2d');
 const proc = document.createElement('canvas'), pctx = proc.getContext('2d', { willReadFrequently: true });
@@ -312,7 +313,7 @@ function onFrame(t) {
   if (S.wantFrame) { const r = S.wantFrame; S.wantFrame = null; r(vctx.getImageData(0, 0, W, H)); }
   if (S.drag >= 0 || guided()) grabLoupe(W, H);
   if (S.session) ring.capture(view, t);
-  if (S.session && S.cam && src.kind !== 'demo') captureBatterEnd(t);
+  if (S.session && S.cam && src.kind !== 'demo') { captureBatterEnd(t); captureFlight(t); }
 
   if (S.session && S.cam && !S.calibrating) {
     const pw = Math.min(W, settings.procW), ph = Math.round(H * pw / W);
@@ -502,6 +503,7 @@ const MIN_RELEASE_PX = 11;   // moving pixels (in a 720-wide frame) a ball cover
 function onTrack(candidates) {
   const W = S.source.width, L = settings.L, demo = S.source.kind === 'demo';
   let best = null, why = null, whyLen = 0;
+  const loose = [];        // paths that fail the strict checks but could be the ball: the detector decides
   // the reason the longest rejected path was not a delivery (the longest is most likely the ball)
   const reject = (path, reason) => { if (path.length > whyLen) { whyLen = path.length; why = reason; } };
   for (const path of candidates) {
@@ -514,22 +516,62 @@ function onTrack(candidates) {
     if (obs[0].t < S.lastBallEnd + 2.5 && obs[0].t > S.lastBallEnd - 5) { reject(path, 'too soon after the last ball'); continue; }
     const a = analyseTrack(obs, S.cam, { L, hand: F.hand, rmsMax: 5 * W / 1280 });
     // it must head from the bowler's end toward the batter's stumps
+    const dc = demo ? { ok: true } : deliveryCheck(obs, S.cam, L, minSize);
+    if (!demo && (i0 < 0 || !dc.ok)) {
+      // A looser look: roughly from the bowler's end, steadily down this pitch. Taken only if the
+      // ball detector then sees a ball along it (a low camera close behind the bowler, or a ball
+      // first seen a little after the release, fails the strict checks above).
+      const j0 = deliveryStart(path, S.cam, L, minSize, true);
+      if (j0 >= 0) {
+        const lo = trimAtBatter(path.slice(j0), S.cam);
+        if (lo.length >= 6 && !(lo[0].t < S.lastBallEnd + 2.5 && lo[0].t > S.lastBallEnd - 5) && deliveryCheck(lo, S.cam, L, minSize).ok) loose.push(lo);
+      }
+    }
     if (i0 < 0 && !(demo && a.ok)) { reject(path, 'it did not start where a bowler lets go of the ball (check the markers and the camera height)'); continue; }
     // and stay on this pitch: not a ball in the next net, a throw back, or someone walking past
-    const dc = demo ? { ok: true } : deliveryCheck(obs, S.cam, L, minSize);
     if (!dc.ok) { reject(path, dc.why); continue; }
     if (!best || obs.length > best.obs.length) best = { obs, a };
   }
+  if (!best && loose.length) { confirmLoose(loose, why); return; }
   if (!best) {
     S.status = why ? `Saw movement, but not a delivery: ${why}` : 'Saw movement, but not a delivery';
     console.info('[tracker] not a delivery:', why, `(${candidates.length} path(s), longest rejected ${whyLen} points)`);
     updatePill(); return;
   }
-  const { obs, a: r } = best;
+  acceptDelivery(best.obs, best.a);
+}
+
+/** Paths the strict checks turned down: take the first the ball detector sees a ball along. */
+async function confirmLoose(loose, why) {
+  const sess = S.session;
+  S.status = 'Checking whether that was the ball\u2026'; updatePill();
+  S.pending = (S.pending || 0) + 1;
+  try {
+    await loadDetector();
+    const s = video.videoWidth / view.width;
+    const toCrop = (r, u, v) => ({ x: (u * s - r.x) * 640 / r.w, y: (v * s - r.y) * 640 / r.h });
+    loose.sort((p, q) => q.length - p.length);
+    for (const obs of loose.slice(0, 3)) {
+      const { checked, hits } = await confirmBall(obs, flight, toCrop);
+      console.info('[tracker] ball check:', `${hits}/${checked} frames show a ball`, `(${obs.length} points from t ${obs[0].t.toFixed(2)})`);
+      if (checked >= 3 && hits >= 3 && sess && !(obs[0].t < S.lastBallEnd + 2.5 && obs[0].t > S.lastBallEnd - 5)) {
+        acceptDelivery(obs, null, true, sess);      // the session may be ending (end of a clip): it waits for this
+        return;
+      }
+    }
+    S.status = why ? `Saw movement, but not a delivery: ${why}` : 'Saw movement, but not a delivery';
+  } catch (e) {
+    S.status = why ? `Saw movement, but not a delivery: ${why}` : 'Saw movement, but not a delivery';   // no detector (offline?): only the strict checks count
+  } finally { S.pending--; updatePill(); }
+}
+
+/** A delivery found: measure it, keep its clip, and (after the bat contact is refined) save it. */
+function acceptDelivery(obs, r, confirmed = false, sess = S.session) {
+  const L = settings.L, demo = S.source.kind === 'demo';
   const m = measureDelivery(obs, S.cam, L, F.hand);
   S.lastBallEnd = obs[obs.length - 1].t;
-  const ball = { at: Date.now(), hand: F.hand, L, fps: Math.round((obs.length - 1) / (obs[obs.length - 1].t - obs[0].t)), obs: obs.map((o) => [+o.t.toFixed(4), Math.round(o.u), Math.round(o.v)]) };
-  if (demo && r.ok) {
+  const ball = { at: Date.now(), hand: F.hand, L, confirmedBy: confirmed ? 'detector' : 'motion', fps: Math.round((obs.length - 1) / (obs[obs.length - 1].t - obs[0].t)), obs: obs.map((o) => [+o.t.toFixed(4), Math.round(o.u), Math.round(o.v)]) };
+  if (demo && r && r.ok) {
     // the demo is filmed from a raised camera where the full 3D fit is reliable
     ball.speed = r.release.speed; ball.swingCm = r.swingCm; ball.turnDeg = r.turnDeg;
     ball.length = r.bounce ? r.bounce.y : null; ball.bx = r.bounce ? r.bounce.x : null;
@@ -547,7 +589,6 @@ function onTrack(candidates) {
     const T = S.source.lastTruth;
     ball.truth = { speed: T.speed, swingCm: T.swingCm, turnDeg: T.turnDeg, length: T.bounce ? T.bounce.y : null };
   }
-  const sess = S.session;
   // keep the frames now, before they roll out of memory; the ball is only added once it checks out
   const clip = ring.extract(obs[0].t - 0.6, obs[obs.length - 1].t + 0.9);
   if (demo) { addBall(sess, ball, clip); return; }
@@ -836,6 +877,27 @@ function batterRect() {
   const y = Math.max(0, Math.min(vh - size, Math.round(top[1] * s - size * 0.05)));
   return { x, y, w: size, h: size, s };
 }
+// Where the ball flies: from just out of the bowler's hand to the batter's stumps, as one square
+// of the video at full sharpness (the working frame is scaled down).
+function flightRect() {
+  const vw = video.videoWidth, vh = video.videoHeight, s = vw / view.width, L = settings.L;
+  const pts = [];
+  for (const ahead of [1, 2.5]) for (const [x, z] of [[-1, 1.5], [1, 1.5], [-1, 2.6], [1, 2.6]]) pts.push(project(S.cam, [x, L - ahead, z]));
+  pts.push(project(S.cam, [-0.6, 0, 0]), project(S.cam, [0.6, 0, 0.8]));
+  const ok = pts.filter((p) => p[2] > 0.05);
+  if (!ok.length) return null;
+  const xs = ok.map((p) => p[0] * s), ys = ok.map((p) => p[1] * s), pad = 0.05 * vw;
+  const x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad, y0 = Math.min(...ys) - pad, y1 = Math.max(...ys) + pad;
+  const size = Math.round(Math.min(Math.max(vw, vh), Math.max(480, x1 - x0, y1 - y0)));
+  const x = Math.max(0, Math.min(vw - size, Math.round((x0 + x1) / 2 - size / 2)));
+  const y = Math.max(0, Math.min(vh - size, Math.round((y0 + y1) / 2 - size / 2)));
+  return { x, y, w: Math.min(size, vw), h: Math.min(size, vh), s };
+}
+function captureFlight(t) {
+  if (!video.videoWidth) return;
+  const r = flightRect();
+  if (r) flight.capture(video, r, t);
+}
 function captureBatterEnd(t) {
   if (!video.videoWidth) return;
   crops.capture(video, batterRect(), t);
@@ -978,7 +1040,7 @@ function startSession() {
   S.session = { id: newId(), startedAt: Date.now(), endedAt: null, hand: F.hand, L: settings.L, balls: [] };
   S.sessions.unshift(S.session);
   S.viewSession = S.session; S.last = null; S.status = '';
-  detector.reset(); tracker.reset(); ring.reset(); crops.reset(); S.lastT = -1;
+  detector.reset(); tracker.reset(); ring.reset(); crops.reset(); flight.reset(); S.lastT = -1;
   if (S.source && S.source.kind !== 'demo') loadDetector().catch(() => {});
   if (S.source && S.source.kind === 'file') S.source.playFromStart().catch(() => {});
   saveSession(S.session);

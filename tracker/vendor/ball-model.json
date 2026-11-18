@@ -1,0 +1,9 @@
+{
+  "name": "Cricket ball, RF-DETR Nano (int8), trained on the NEW BALL TRACKING dataset, 2026-11-18",
+  "file": "ball-rfdetr-nano.onnx",
+  "format": "detr",
+  "size": 384,
+  "classIndex": 1,
+  "normalize": "imagenet",
+  "minScore": 0.3
+}

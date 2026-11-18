@@ -97,6 +97,19 @@ Third-party files in `vendor/`:
   public. Running the app privately or commercially needs an Ultralytics
   licence or a different model.
 
+- `ball-rfdetr-nano.onnx` (used, via `ball-model.json`): RF-DETR Nano (Roboflow,
+  **Apache-2.0**) fine-tuned on cricket balls from the public
+  [NEW BALL TRACKING](https://universe.roboflow.com/cricket-ball-tracking-dataset/new-ball-tracking)
+  dataset (**CC BY 4.0**), exported to ONNX and stored as 8-bit weights (38 MB). YOLO11n stays as
+  the fallback when `ball-model.json` is removed.
+
+**Is it the ball?** When a moving path fails the strict release checks (a low phone close
+behind the bowler, or the ball first seen a little after release), a looser check of where it
+starts and how it moves is followed by the cricket-ball model: sharp crops of the ball's flight
+are kept while recording, and the path counts as a delivery when the model sees a ball at
+3 of 5 points along it. Balls thrown down the net can be counted too; a missed delivery is
+worse. Paths the strict checks accept are taken as before.
+
 A model trained on cricket balls, with a permissive licence, can replace it with
 no code change: see [MODEL.md](MODEL.md). **Setup › Collect training frames**
 keeps what the detector sees for each ball and exports it, with the ball marked,
