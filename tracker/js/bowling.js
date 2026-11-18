@@ -151,15 +151,28 @@ export function deliveryStart(obs, cam, L, minSize = 0) {
   if (!cam) return -1;
   const W = 2 * cam.cx;
   const hand = [[0, 2.0], [0, 2.5], [0.8, 2.2], [-0.8, 2.2]].map(([x, z]) => project(cam, [x, L - RELEASE_AHEAD, z]));
+  // How fast a slow delivery (50 km/h) just out of the hand crosses the picture from where this
+  // camera stands. From behind the bowler the ball flies almost straight away from the lens, so
+  // this can be small (a low camera a few metres back sees it move only a few pixels a frame);
+  // a fixed share of the picture width would throw such balls out.
+  const v0 = 50 / 3.6, a = project(cam, [0, L - RELEASE_AHEAD, 2.1]), b = project(cam, [0, L - RELEASE_AHEAD - v0 * 0.1, 2.0]);
+  // Only a fraction of it is required: if the pitch length or camera height is a little off, the
+  // expected rate is too (a 1 m camera 3 m back on a short net sees about a fifth of it).
+  const minRate = 0.15 * Math.hypot(b[0] - a[0], b[1] - a[1]) / 0.1;     // pixels a second
   for (let i = 0; i + 6 <= obs.length; i++) {
     const d = Math.min(...hand.map((q) => Math.hypot(obs[i].u - q[0], obs[i].v - q[1])));
     // just out of the hand the ball is a few metres from the lens, so it looks big
     // (the bowler's arm swinging over gives a flicker of big blobs too, but not four in a row)
     const big = !minSize || obs[i].n == null || obs.slice(i, i + 4).every((o) => o.n == null || o.n >= minSize);
-    // and it is moving fast across the picture, not standing still or drifting
-    const step = (k) => Math.hypot(obs[k + 1].u - obs[k].u, obs[k + 1].v - obs[k].v);
-    const moving = !minSize || (Math.hypot(obs[i + 3].u - obs[i].u, obs[i + 3].v - obs[i].v) >= 0.04 * W
-      && [0, 1, 2].every((k) => step(i + k) >= 0.006 * W));
+    // and it is moving steadily across the picture, one way, not standing still or jittering
+    // like an arm or a shirt
+    const dx = (k) => obs[k + 1].u - obs[k].u, dy = (k) => obs[k + 1].v - obs[k].v;
+    const step = (k) => Math.hypot(dx(k), dy(k));
+    const sameWay = (k) => (dx(k) * dx(k + 1) + dy(k) * dy(k + 1)) > 0.5 * step(k) * step(k + 1);
+    const span = obs[i + 3].t - obs[i].t;
+    const moving = !minSize || (span > 0
+      && Math.hypot(obs[i + 3].u - obs[i].u, obs[i + 3].v - obs[i].v) / span >= Math.min(minRate, 0.04 * W / 0.05)
+      && [0, 1, 2].every((k) => step(i + k) >= 1.5) && sameWay(i) && sameWay(i + 1));
     if (d < (minSize ? 0.3 : 0.22) * W && big && moving) return i;
   }
   return -1;
@@ -211,9 +224,14 @@ export function deliveryCheck(obs, cam, L, minSize = 0) {
   if (minSize && obs[0].n != null) {
     // a bowled ball starts big (near the lens) and shrinks as it goes away down the pitch;
     // a ball hit back, or one in the next net, does not
-    const first = median(obs.slice(0, 3).map((o) => o.n)), last = median(obs.slice(-3).map((o) => o.n));
+    const first = median(obs.slice(0, 3).map((o) => o.n));
+    // the smallest it gets later on (three-point medians over the second half): the path can end
+    // merged into the batter, which makes its last points big again
+    let least = Infinity;
+    for (let k = obs.length >> 1; k + 3 <= obs.length; k++) least = Math.min(least, median(obs.slice(k, k + 3).map((o) => o.n)));
+    if (!isFinite(least)) least = median(obs.slice(-3).map((o) => o.n));
     if (first < minSize) return { ok: false, why: 'too small to be just out of the hand' };
-    if (first < 1.5 * last) return { ok: false, why: 'not going away from the camera' };
+    if (first < 1.5 * least) return { ok: false, why: 'not going away from the camera' };
   }
   const onPitch = pitchRegion(cam, -0.5, L - 0.3);
   const off = obs.filter((o) => !onPitch(o.u, o.v)).length;

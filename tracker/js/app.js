@@ -123,8 +123,10 @@ class VideoSource {
     if (this.lastMediaTime != null) { const d = mt - this.lastMediaTime; if (d > 0 && d < 0.5) this.frameSteps.push(d); }
     this.lastMediaTime = mt;
     if (this.frameSteps.length === 30) {
+      // the short steps are the clip's own frame interval: a busy phone that skips frames only
+      // adds longer ones, so take a low percentile, not the median
       const s = this.frameSteps.slice().sort((a, b) => a - b);
-      this.clipFps = 1 / s[s.length >> 1];
+      this.clipFps = 1 / s[Math.floor(s.length * 0.1)];
       showClipRate(this);
     }
   }
