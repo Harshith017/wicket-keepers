@@ -2,7 +2,7 @@ import { calibrate, calibrateFromTaps, project, makeCam, groundPoint } from './g
 import { MapView } from './maps.js';
 import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack, CREASE, STUMP_H } from './physics.js';
 import { FrameRing, Player } from './clips.js';
-import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote, CONTACT_AHEAD, trimAtBatter, ballCandidateFilter } from './bowling.js';
+import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote, CONTACT_AHEAD, trimAtBatter, ballCandidateFilter, releaseInLane, smoothFlight } from './bowling.js';
 import { decodeClipAudio, soundContact } from './sound.js';
 import { yoloLabel, trainingFiles, pickForUpload } from './detections.js';
 import { signIn, signOut, signedInEmail, sendFrames, sendSession } from './pipeline.js';
@@ -546,12 +546,15 @@ function onTrack(candidates) {
       const j0 = deliveryStart(path, S.cam, L, minSize, true);
       if (j0 >= 0) {
         const lo = trimAtBatter(path.slice(j0), S.cam);
-        if (lo.length >= 6 && !(lo[0].t < S.lastBallEnd + 2.5 && lo[0].t > S.lastBallEnd - 5) && deliveryCheck(lo, S.cam, L, minSize).ok) loose.push(lo);
+        if (lo.length >= 6 && !(lo[0].t < S.lastBallEnd + 2.5 && lo[0].t > S.lastBallEnd - 5) && deliveryCheck(lo, S.cam, L, minSize).ok && !releaseInLane(lo, S.cam, L) && !smoothFlight(lo, W, S.cam)) loose.push(lo);
       }
     }
     if (i0 < 0 && !(demo && a.ok)) { reject(path, 'it did not start where a bowler lets go of the ball (check the markers and the camera height)'); continue; }
     // and stay on this pitch: not a ball in the next net, a throw back, or someone walking past
     if (!dc.ok) { reject(path, dc.why); continue; }
+    // let go of by this pitch's bowler, and flying smoothly: not the next net's ball, nor noise
+    const lane = demo ? '' : releaseInLane(obs, S.cam, L) || smoothFlight(obs, W, S.cam);
+    if (lane) { reject(path, lane); continue; }
     if (!best || obs.length > best.obs.length) best = { obs, a };
   }
   if (!best && loose.length) { confirmLoose(loose, why); return; }

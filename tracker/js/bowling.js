@@ -274,7 +274,79 @@ export function deliveryCheck(obs, cam, L, minSize = 0) {
 export function reachesBatter(last, cam) {
   if (!cam) return true;
   const q = project(cam, [0, 0.5, 0.3]);
-  return Math.hypot(last.u - q[0], last.v - q[1]) < 0.2 * 2 * cam.cx;
+  if (Math.hypot(last.u - q[0], last.v - q[1]) >= 0.2 * 2 * cam.cx) return false;
+  // Near the far end a few pixels are a metre or more across: also where it ends must be over this
+  // pitch at the batter, not in the next net (seen from behind, both are close in the picture).
+  const p = rayAtY(cam, last.u, last.v, CONTACT_AHEAD);
+  return !p || (Math.abs(p[0]) <= 1.5 && p[2] > -0.8 && p[2] < 2.6);
+}
+
+/** Where the line of sight through image point (u, v) crosses the plane y = Y (across the pitch). */
+export function rayAtY(cam, u, v, Y) {
+  if (!cam || !cam.C || !cam.R) return null;
+  const d = [(u - cam.cx) / cam.f, (v - cam.cy) / cam.f, 1], R = cam.R;
+  const w = [0, 1, 2].map((j) => R[0][j] * d[0] + R[1][j] * d[1] + R[2][j] * d[2]);
+  if (Math.abs(w[1]) < 1e-9) return null;
+  const s = (Y - cam.C[1]) / w[1];
+  return s > 0 ? [cam.C[0] + s * w[0], Y, cam.C[2] + s * w[2]] : null;
+}
+
+/**
+ * Was this path let go of by this pitch's bowler? Its first point, taken at the bowler's end
+ * (1.5 m in front of the stumps), must be within 1.2 m of the middle stump's line and at least
+ * 1.3 m up: a hand at release. A ball from the next net comes in from the side of the picture
+ * (2 m or more off this line), and movement first seen down at the batter's end is low.
+ * Returns '' when it was, else the reason.
+ */
+export function releaseInLane(obs, cam, L) {
+  if (!cam || !obs.length) return '';
+  const p = rayAtY(cam, obs[0].u, obs[0].v, L - 1.5);
+  if (!p) return '';
+  if (Math.abs(p[0]) > 1.2) return `it started ${Math.abs(p[0]).toFixed(1)} m to the side of this pitch (a ball in the next net)`;
+  if (p[2] < 1.3) return 'it started low, not from the bowler\'s hand';
+  return '';
+}
+
+/**
+ * A ball in flight moves smoothly across the picture: each point lies close to where its
+ * neighbours put it, with no sudden leaps (a bounce or the bat bends it once, not all along). A path
+ * hopping between a shirt, a net and a hand does not. '' or the reason.
+ */
+export function smoothFlight(obs, W, cam = null) {
+  // only its flight counts: what the tracker joins on once it is at the batter is not looked at
+  if (cam) {
+    const q = project(cam, [0, CONTACT_AHEAD, 0.4]);
+    let k = obs.length - 1, best = Infinity;
+    // the first time it gets there (as trimAtBatter does)
+    for (let i = 0; i < obs.length; i++) {
+      const d = Math.hypot(obs[i].u - q[0], obs[i].v - q[1]);
+      if (best < 0.25 * W && obs[i].t - obs[i - 1].t > 0.12) break;   // lost at the batter: what follows is not its flight
+      if (d < best) { best = d; k = i; } else if (best < 0.25 * W && d > best + 0.06 * W) break;
+    }
+    obs = obs.slice(0, k + 1);
+  }
+  if (obs.length < 6) return '';
+  let off = 0;
+  for (let i = 1; i + 1 < obs.length; i++) {
+    const p = obs[i - 1], q = obs[i], r = obs[i + 1];
+    const f = (q.t - p.t) / ((r.t - p.t) || 1);
+    const eu = q.u - (p.u + f * (r.u - p.u)), ev = q.v - (p.v + f * (r.v - p.v));
+    const step = Math.max(Math.hypot(q.u - p.u, q.v - p.v), Math.hypot(r.u - q.u, r.v - q.v));
+    if (Math.hypot(eu, ev) > Math.max(0.005 * W, 0.45 * step)) off++;
+  }
+  if (off > 0.25 * (obs.length - 2)) return 'it wandered about instead of flying in a smooth curve';
+  // Steps shrink as the ball flies away from the lens, but gradually: one step far longer than
+  // those either side of it is a jump to something else.
+  const steps = obs.slice(1).map((o, i) => Math.hypot(o.u - obs[i].u, o.v - obs[i].v) / Math.max(1e-3, o.t - obs[i].t));
+  for (let i = 1; i + 1 < steps.length; i++) {
+    const len = steps[i] * (obs[i + 1].t - obs[i].t);
+    if (len > 0.02 * W && steps[i] > 4 * Math.max(steps[i - 1], steps[i + 1])) return 'it leapt across the picture partway (not one ball)';
+  }
+  // nor does a ball out of sight for a few frames turn up a long way off
+  for (let i = 1; i < obs.length; i++) {
+    if (obs[i].t - obs[i - 1].t > 0.08 && Math.hypot(obs[i].u - obs[i - 1].u, obs[i].v - obs[i - 1].v) > 0.08 * W) return 'it leapt across the picture partway (not one ball)';
+  }
+  return '';
 }
 
 /**
