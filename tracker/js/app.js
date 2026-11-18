@@ -2,7 +2,7 @@ import { calibrate, calibrateFromTaps, project, makeCam, groundPoint } from './g
 import { MapView } from './maps.js';
 import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack, CREASE, STUMP_H } from './physics.js';
 import { FrameRing, Player } from './clips.js';
-import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote, CONTACT_AHEAD, trimAtBatter } from './bowling.js';
+import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote, CONTACT_AHEAD, trimAtBatter, ballCandidateFilter } from './bowling.js';
 import { decodeClipAudio, soundContact } from './sound.js';
 import { yoloLabel, trainingFiles, pickForUpload } from './detections.js';
 import { signIn, signOut, signedInEmail, sendFrames } from './pipeline.js';
@@ -336,7 +336,9 @@ function onFrame(t) {
     const det = detector.process(pctx.getImageData(0, 0, pw, ph), t);
     if (det) {
       const k = W / pw;
-      const blobs = det.noisy ? [] : det.blobs.map((b) => ({ x: b.x * k, y: b.y * k, n: b.n }));   // n stays in detector pixels: only ratios are used
+      // only moving things over this pitch, and near the batter nothing shaped like a bat or a body
+      if (!S.blobFilter || S.blobFilter.cam !== S.cam || S.blobFilter.pw !== pw) S.blobFilter = { cam: S.cam, pw, test: src.kind === 'demo' ? () => true : ballCandidateFilter(S.cam, settings.L, pw / W) };
+      const blobs = det.noisy ? [] : det.blobs.map((b) => ({ x: b.x * k, y: b.y * k, n: b.n, bw: b.bw, bh: b.bh })).filter(S.blobFilter.test);   // n, bw, bh stay in detector pixels
       const res = tracker.update(blobs, det.t);
       S.live = res.live;
       if (res.finished) onTrack(res.finished);
@@ -610,8 +612,10 @@ function acceptDelivery(obs, r, confirmed = false, sess = S.session) {
     const kmh = ball.speed * 3.6;
     // far too slow or fast for a bowled ball, or it never got to the batter: something else moved
     const end = ball.obs[ball.obs.length - 1];
-    if (!(kmh >= MIN_KMH && kmh <= MAX_KMH) || !reachesBatter({ u: end[1], v: end[2] }, S.cam)) {
-      S.status = 'Ignored something that was not a delivery'; updatePill();
+    const reached = reachesBatter({ u: end[1], v: end[2] }, S.cam);
+    if (!(kmh >= MIN_KMH && kmh <= MAX_KMH) || !reached) {
+      console.info('[tracker] ignored:', !reached ? 'did not reach the batter' : `speed ${Math.round(kmh)} km/h out of range`, `(from t ${ball.obs[0][0]}, ${ball.obs.length} points, ends at ${end[1]},${end[2]})`);
+      S.status = !reached ? 'Ignored a path that did not reach the batter' : `Ignored: ${Math.round(kmh)} km/h is not a bowled ball`; updatePill();
       return;
     }
     addBall(sess, ball, clip);
