@@ -3,7 +3,7 @@
 // the next net, movement down at the batter's end, and a path hopping between things must not.
 import { lookAtCam, project, calibrateFromTaps } from '../js/geometry.js';
 import { generateDelivery } from '../js/sim.js';
-import { releaseInLane, smoothFlight, reachesBatter, deliveryStart, deliveryCheck, trimAtBatter } from '../js/bowling.js';
+import { releaseInLane, smoothFlight, reachesBatter, deliveryStart, deliveryCheck, trimAtBatter, overThisPitch } from '../js/bowling.js';
 
 export function laneChecks(check, rnd) {
   const L = 20.12, W = 720, H = 1280;
@@ -75,4 +75,42 @@ export function heightChecks(check, rnd) {
   check('[height] the markers fit from 150-170 cm with taps a few pixels off', cals === n, `${cals}/${n}`);
   check('[height] this pitch\'s deliveries count from 150-170 cm, 4-6 m back', own >= 0.95 * ownN, `${own}/${ownN}`);
   check('[height] the next net\'s balls do not', side === sideN, `${side}/${sideN}`);
+}
+
+// A ball in the next net, seen only for a short stretch far down the pitch (it came into the picture
+// late and was lost early): where it started can look like this bowler's hand, so the whole path must
+// show it was not over this pitch. This pitch's balls seen for the same short stretch still count.
+export function sideNetChecks(check) {
+  const L = 20.12, W = 720, H = 1280;
+  const cam = lookAtCam([0.1, L + 4.7, 1.5], [0, 3, 0.3], 1.4 * W, W, H);
+  const seen = (x0, x1, t0, t1) => {
+    const out = [], T = 0.95;            // about 75 km/h from the hand to the batter
+    for (let t = t0; t <= t1; t += 1 / 60) {
+      const f = t / T, y = L - 1 - (L - 2.5) * f, x = x0 + (x1 - x0) * f, z = Math.max(0.05, 2.1 - 2.4 * f * f);
+      const q = project(cam, [x, y, z]); out.push({ t, u: q[0], v: q[1] });
+    }
+    return out;
+  };
+  let side = 0, own = 0;
+  for (const x of [-4.3, -3.5, 3.5, 4.3]) if (overThisPitch(seen(x, x, 0.45, 0.88), cam, L, 0.8 * 75)) side++;   // its speed, estimated, about 75 km/h
+  for (const [a, b, t0, t1] of [[0.3, 0, 0.05, 0.5], [-0.4, 0.5, 0.1, 0.6], [0.5, -0.3, 0.05, 0.85]]) if (!overThisPitch(seen(a, b, t0, t1), cam, L, 0.8 * 75)) own++;
+  check('[side net] a next-net ball seen only partway is turned down', side === 4, `${side}/4`);
+  check('[side net] this pitch\'s balls seen partway still count', own === 3, `${own}/3`);
+}
+
+// Real balls sent from the nets (test/fixtures): the next net's ball must be turned down and this
+// pitch's deliveries kept, whichever way their arrival was found.
+export async function realSessionChecks(check) {
+  const { makeCam } = await import('../js/geometry.js');
+  const fs = await import('node:fs');
+  const f = JSON.parse(fs.readFileSync(new URL('./fixtures/session-2026-11-19.json', import.meta.url)));
+  const c = f.cam, cam = makeCam(c.f, c.cx, c.cy, c.R, c.t);
+  let right = 0;
+  for (const b of f.balls) {
+    const obs = b.obs.map(([t, u, v]) => ({ t, u, v })), end = obs[obs.length - 1];
+    const why = releaseInLane(obs, cam, f.L) || overThisPitch(obs, cam, f.L) || smoothFlight(obs, c.W, cam)
+      || (b.arriveBy === 'estimated' ? overThisPitch(obs, cam, f.L, 0.8 * b.kmh) : reachesBatter(end, cam) ? '' : 'did not reach the batter');
+    if ((b.net === 'next') === !!why) right++;
+  }
+  check('[real session 19 Nov] the next net\'s ball is turned down and this pitch\'s balls kept', right === f.balls.length, `${right}/${f.balls.length}`);
 }
