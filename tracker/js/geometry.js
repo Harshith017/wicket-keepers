@@ -337,7 +337,9 @@ export function calibrateFromTaps(qFar, qNear, qTop, heightM, fGuess, W, H, L) {
     const sol = levenberg(res, p0, { iters: 100 });
     if (!best || sol.cost < best.cost) best = sol;
   }
-  if (!best || best.cost > 2 * pts.length || best.x[1] < 0) return null;     // the taps cannot all be met
+  // the taps cannot all be met: more than 1% of the picture's width off on average (a finger is
+  // seldom closer than a couple of pixels, so a pixel-sized limit turned down good taps)
+  if (!best || best.cost > 2 * pts.length * Math.max(1, (0.01 * W) ** 2) || best.x[1] < 0) return null;
   const c = cam(best.x);
   return { cam: c, distBehind: best.x[1], offset: best.x[0], fRel: c.f / W, rms: Math.sqrt(best.cost / (2 * pts.length)) };
 }
