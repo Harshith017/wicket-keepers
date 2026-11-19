@@ -2,6 +2,7 @@ import { calibrate, calibrateFromTaps, project, makeCam, groundPoint } from './g
 import { MapView } from './maps.js';
 import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack, CREASE, STUMP_H } from './physics.js';
 import { FrameRing, Player } from './clips.js';
+import { fitFlight, LOST_SHORT, prepareFlights } from './arrival.js';
 import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote, CONTACT_AHEAD, trimAtBatter, ballCandidateFilter, releaseInLane, smoothFlight } from './bowling.js';
 import { decodeClipAudio, soundContact } from './sound.js';
 import { yoloLabel, trainingFiles, pickForUpload } from './detections.js';
@@ -629,7 +630,7 @@ function acceptDelivery(obs, r, confirmed = false, sess = S.session) {
     const kmh = ball.speed * 3.6;
     // far too slow or fast for a bowled ball, or it never got to the batter: something else moved
     const end = ball.obs[ball.obs.length - 1];
-    const reached = reachesBatter({ u: end[1], v: end[2] }, S.cam);
+    const reached = ball.arriveBy === 'estimated' || reachesBatter({ u: end[1], v: end[2] }, S.cam);
     if (!(kmh >= MIN_KMH && kmh <= MAX_KMH) || !reached) {
       note(sess, `ignored: ${!reached ? 'did not reach the batter' : `speed ${Math.round(kmh)} km/h out of range`} (from t ${ball.obs[0][0]}, ${ball.obs.length} points, ends at ${end[1]},${end[2]})`);
       S.status = !reached ? 'Ignored a path that did not reach the batter' : `Ignored: ${Math.round(kmh)} km/h is not a bowled ball`; updatePill();
@@ -945,7 +946,25 @@ function captureBatterEnd(t) {
 /** After a delivery: the "reached bat" moment, from the picture and then (if switched on) the sound. */
 async function refineWithDetector(ball) {
   await refineByPicture(ball);
+  refineByFlight(ball);
   await refineBySound(ball);
+}
+/**
+ * Every bowled ball reaches the batter. When it was lost well short of the batter (against the
+ * batter's whites, or a busy phone dropping frames), its last point is not the arrival: that made
+ * the flight short and the speed far too high. A delivery is fitted to the part that was seen and
+ * the arrival read off it.
+ */
+function refineByFlight(ball) {
+  if (!ball.cam || !ball.obs || ball.obs.length < 6) return;
+  const cam = makeCam(ball.cam.f, ball.cam.cx, ball.cam.cy, ball.cam.R, ball.cam.t);
+  const obs = ball.obs.map(([t, u, v]) => ({ t, u, v }));
+  const f = fitFlight(obs, cam, ball.L || settings.L);
+  if (!f || f.err > 0.03 * ball.cam.W) return;                 // no delivery fits what was seen
+  if (f.tArrive - obs[obs.length - 1].t <= LOST_SHORT) return;   // it was seen to the batter
+  ball.marks.release = f.tRelease; ball.marks.arrive = f.tArrive;
+  ball.arriveBy = 'estimated';
+  applyMarks(ball);
 }
 /**
  * Experimental: the bat's click in a clip's sound pins the contact to well under a millisecond.
@@ -1082,6 +1101,7 @@ function startSession() {
     setup: { settings: { ...settings }, quickPts: S.quickPts, calibPts: S.calibPts, camInfo: S.camInfo,
       source: S.source ? { kind: S.source.kind, width: S.source.width, height: S.source.height, camFps: S.source.camFps || null } : null } };
   S.sessions.unshift(S.session);
+  setTimeout(() => prepareFlights(settings.L), 50);     // for balls lost short of the batter (arrival.js)
   S.viewSession = S.session; S.last = null; S.status = '';
   detector.reset(); tracker.reset(); ring.reset(); crops.reset(); flight.reset(); S.lastT = -1;
   if (S.source && S.source.kind !== 'demo') loadDetector().catch(() => {});
