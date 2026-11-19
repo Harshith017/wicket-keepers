@@ -3,7 +3,7 @@ import { MapView } from './maps.js';
 import { analyseTrack, sampleSegments, simulateShot, runsFor, segPos, shotTrack, CREASE, STUMP_H } from './physics.js';
 import { FrameRing, Player } from './clips.js';
 import { fitFlight, LOST_SHORT, prepareFlights } from './arrival.js';
-import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote, CONTACT_AHEAD, trimAtBatter, ballCandidateFilter, releaseInLane, smoothFlight } from './bowling.js';
+import { measureDelivery, deliveryStart, deliveryCheck, reachesBatter, pitchRegion, tofSpeed, distanceFromKnown, flightDistance, frameRateNote, CONTACT_AHEAD, trimAtBatter, ballCandidateFilter, releaseInLane, smoothFlight, overThisPitch } from './bowling.js';
 import { decodeClipAudio, soundContact } from './sound.js';
 import { yoloLabel, trainingFiles, pickForUpload } from './detections.js';
 import { signIn, signOut, signedInEmail, sendFrames, sendSession } from './pipeline.js';
@@ -553,14 +553,14 @@ function onTrack(candidates) {
       const j0 = deliveryStart(path, S.cam, L, minSize, true);
       if (j0 >= 0) {
         const lo = trimAtBatter(path.slice(j0), S.cam);
-        if (lo.length >= 6 && !(lo[0].t < S.lastBallEnd + 2.5 && lo[0].t > S.lastBallEnd - 5) && deliveryCheck(lo, S.cam, L, minSize).ok && !releaseInLane(lo, S.cam, L) && !smoothFlight(lo, W, S.cam)) loose.push(lo);
+        if (lo.length >= 6 && !(lo[0].t < S.lastBallEnd + 2.5 && lo[0].t > S.lastBallEnd - 5) && deliveryCheck(lo, S.cam, L, minSize).ok && !releaseInLane(lo, S.cam, L) && !overThisPitch(lo, S.cam, L) && !smoothFlight(lo, W, S.cam)) loose.push(lo);
       }
     }
     if (i0 < 0 && !(demo && a.ok)) { reject(path, 'it did not start where a bowler lets go of the ball (check the markers and the camera height)'); continue; }
     // and stay on this pitch: not a ball in the next net, a throw back, or someone walking past
     if (!dc.ok) { reject(path, dc.why); continue; }
     // let go of by this pitch's bowler, and flying smoothly: not the next net's ball, nor noise
-    const lane = demo ? '' : releaseInLane(obs, S.cam, L) || smoothFlight(obs, W, S.cam);
+    const lane = demo ? '' : releaseInLane(obs, S.cam, L) || overThisPitch(obs, S.cam, L) || smoothFlight(obs, W, S.cam);
     if (lane) { reject(path, lane); continue; }
     if (!best || obs.length > best.obs.length) best = { obs, a };
   }
@@ -630,7 +630,11 @@ function acceptDelivery(obs, r, confirmed = false, sess = S.session) {
     const kmh = ball.speed * 3.6;
     // far too slow or fast for a bowled ball, or it never got to the batter: something else moved
     const end = ball.obs[ball.obs.length - 1];
-    const reached = ball.arriveBy === 'estimated' || reachesBatter({ u: end[1], v: end[2] }, S.cam);
+    // a ball lost on the way was not seen at the batter: it must still have been over this pitch
+    // the whole way it was seen (with the detector's points), not a ball in the next net
+    const reached = ball.arriveBy === 'estimated'
+      ? !overThisPitch(ball.obs.map(([t, u, v]) => ({ t, u, v })), S.cam, L, 0.8 * kmh)
+      : reachesBatter({ u: end[1], v: end[2] }, S.cam);
     if (!(kmh >= MIN_KMH && kmh <= MAX_KMH) || !reached) {
       note(sess, `ignored: ${!reached ? 'did not reach the batter' : `speed ${Math.round(kmh)} km/h out of range`} (from t ${ball.obs[0][0]}, ${ball.obs.length} points, ends at ${end[1]},${end[2]})`);
       S.status = !reached ? 'Ignored a path that did not reach the batter' : `Ignored: ${Math.round(kmh)} km/h is not a bowled ball`; updatePill();

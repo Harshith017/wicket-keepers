@@ -6,7 +6,7 @@ import { generateDelivery } from '../js/sim.js';
 import { timingChecks } from './timing.mjs';
 import { soundChecks } from './sound.mjs';
 import { detectionChecks } from './detections.mjs';
-import { laneChecks, heightChecks } from './lane.mjs';
+import { laneChecks, heightChecks, sideNetChecks, realSessionChecks } from './lane.mjs';
 import { arrivalChecks } from './arrival.mjs';
 
 let seed = 7;
@@ -96,6 +96,8 @@ check('edge behind is CAUGHT by keeper', edge.outcome === 'CAUGHT' && edge.by.na
 timingChecks(check, rnd);
 laneChecks(check, rnd);
 heightChecks(check, rnd);
+sideNetChecks(check);
+await realSessionChecks(check);
 arrivalChecks(check);
 soundChecks(check, rnd);
 detectionChecks(check);

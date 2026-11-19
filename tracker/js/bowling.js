@@ -308,6 +308,31 @@ export function releaseInLane(obs, cam, L) {
 }
 
 /**
+ * Over this pitch the whole way? From behind, one point in the picture could be a ball close to the
+ * lens over this pitch or one far away in the next net: its depth is not known. But each point is
+ * over this pitch (within 1.5 m of the stumps' line, under 3.5 m up) only at some depths, and a
+ * bowled ball must get a good way down the pitch in the time it is seen (at least 50 km/h, or
+ * `kmh` when its speed is known, with some slack). A ball in the next net can only be over this pitch close to the lens, so it cannot
+ * cover that distance. Returns '' when it can be this pitch's ball, else the reason.
+ */
+export function overThisPitch(obs, cam, L, kmh = 50) {
+  if (!cam || !cam.C || obs.length < 4) return '';
+  const span = (o) => {
+    let near = null, far = null;
+    for (let y = L + 0.5; y >= -0.5; y -= 0.25) {
+      const p = rayAtY(cam, o.u, o.v, y);
+      if (p && Math.abs(p[0]) <= 1.5 && p[2] >= -0.3 && p[2] <= 3.5) { if (near == null) near = y; far = y; }
+    }
+    return near == null ? null : { near, far };
+  };
+  const a = span(obs[0]), b = span(obs[obs.length - 1]);
+  if (!a || !b) return 'it was not over this pitch (a ball in the next net)';
+  const need = 0.9 * (Math.max(50, kmh) / 3.6) * (obs[obs.length - 1].t - obs[0].t);
+  if (a.near - b.far < need) return 'it could not have been over this pitch the whole way (a ball in the next net)';
+  return '';
+}
+
+/**
  * A ball in flight moves smoothly across the picture: each point lies close to where its
  * neighbours put it, with no sudden leaps (a bounce or the bat bends it once, not all along). A path
  * hopping between a shirt, a net and a hand does not. '' or the reason.
