@@ -229,7 +229,10 @@ function recalibrate() {
       S.cam = r.cam;
       S.camLow = camHeight() < MIN_CAM_HEIGHT;
       S.camInfo = `Camera ${(camHeight() * 100).toFixed(0)} cm high, ${r.distBehind.toFixed(1)} m behind your stumps`
-        + (S.camLow ? `. Raise it to at least ${MIN_CAM_HEIGHT * 100} cm; this low, speed and length readings are unreliable` : '');
+        + (S.camLow ? `. Raise it to at least ${MIN_CAM_HEIGHT * 100} cm; this low, speed and length readings are unreliable` : '')
+        // 4-6 m back keeps the ball big enough and the length close; nearer, the bowler hides it
+        + (!S.camLow && r.distBehind < 3.5 ? '. Move it back to about 5 m behind your stumps, so the bowler does not hide the ball' : '')
+        + (!S.camLow && r.distBehind > 8 ? '. Bring it closer, to about 5 m behind your stumps: from this far the ball is tiny and the length less sure' : '');
     } else S.camInfo = 'Those markers don\u2019t fit: check they are on the bottom and top of the batter\u2019s stumps and the bottom of yours.';
   } else {
     const r = calibrate(px, settings.rectW, settings.L, W, H);
@@ -238,7 +241,10 @@ function recalibrate() {
       const C = r.cam.C;
       S.camLow = C[2] < MIN_CAM_HEIGHT;
       S.camInfo = `Camera ${(C[2] * 100).toFixed(0)} cm high, ${Math.hypot(C[0], C[1]).toFixed(0)} m from the striker's stumps`
-        + (S.camLow ? `. Raise it to at least ${MIN_CAM_HEIGHT * 100} cm; this low, speed and length readings are unreliable` : '');
+        + (S.camLow ? `. Raise it to at least ${MIN_CAM_HEIGHT * 100} cm; this low, speed and length readings are unreliable` : '')
+        // 4-6 m back keeps the ball big enough and the length close; nearer, the bowler hides it
+        + (!S.camLow && r.distBehind < 3.5 ? '. Move it back to about 5 m behind your stumps, so the bowler does not hide the ball' : '')
+        + (!S.camLow && r.distBehind > 8 ? '. Bring it closer, to about 5 m behind your stumps: from this far the ball is tiny and the length less sure' : '');
     } else S.camInfo = 'Those corners don\u2019t form a pitch the camera could be seeing \u2014 adjust them.';
   }
   tracker.W = W;
